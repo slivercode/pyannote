@@ -15,7 +15,9 @@
 - **简单上手**；高度封装，windows系统都支持，如果cuda版本升级到12.6以上，自动GPU加速
 
 ###  使用效果
-[点我查看]()
+[点我查看](https://www.bilibili.com/video/BV1hpC7BCEH6/?vd_source=6d01acfe83ea00158ccaeb958891031d)
+<br/>
+
 ###  使用场景
 
 - **会议记录总结**，**音视频学习**， 因为能精准识别说话人，再用AI总结，会更精准
