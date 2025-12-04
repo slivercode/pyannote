@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>vocal-cutting: 人声切割</title>
+  <link rel="icon" href="favicon.png" type="image/png" sizes="32x32">
+  <!-- 引入Vue3 -->
+  <script src="./vue.global.prod.js"></script>
+  <!-- 引入Axios（处理HTTP请求） -->
+  <script src="./axios.min.js"></script>
+  <!-- 引入Tailwind CSS（快速美化界面，可选） -->
+  <script src="./tailwindcss.js"></script>
+  <!-- 引入Font Awesome -->
+  <link href="./font-awesome.min.css" rel="stylesheet" />
+  <!-- 引入wavesurfer.js -->
+  <script src="./wavesurfer.min.js"></script>
+  <!-- 配置Tailwind自定义颜色 -->
+
+  <!-- 配置Tailwind自定义颜色 -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: "#7c4dff",
+            dark: "#121212",
+            darker: "#212121",
+          },
+        },
+      },
+    };
+  </script>
+
+  <style type="text/tailwindcss">
+    @layer utilities {
+        .content-auto {
+          content-visibility: auto;
+        }
+        .audio-wave {
+          stroke-linecap: round;
+        }
+      }
+    </style>
+</head>
+
+<body class="bg-dark text-gray-200 font-sans m-0 p-5 md:p-6">
+  <!-- Vue 应用挂载容器 -->
+  <div id="app" class="max-w-6xl mx-auto">
+    <!-- 顶部标签栏 -->
+    <div class="flex gap-5 border-b-2 border-primary mb-5">
+      <div class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+        :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task1' }">
+        人声分离
+      </div>
+      <div class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+        :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task2' }" @click="go()">
+        人声分离
+      </div>
+      <!-- 新增：帮助按钮（靠右显示，使用flex-grow推到右侧） -->
+      <div class="flex-grow flex justify-end">
+        <a href="https://gitee.com/choui666/vocal_separation/blob/master/vocal_split.md" target="_blank"
+          class="flex items-center gap-1 px-3 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+          title="查看帮助文档">
+          <i class="fa fa-question-circle"></i>
+          <span class="text-sm">帮助</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- 语音分离任务内容（默认显示） -->
+    <div v-if="activeTab === 'task1'">
+      <h2 class="text-center text-primary mb-3 text-2xl font-semibold">
+        识别出现的不同人声，并将同一人声合并为一个音频文件，保留时间线
+      </h2>
+
+      <!-- 音频区域 -->
+      <div class="flex flex-col gap-5 mb-5">
+        <!-- 输入音频区域 -->
+        <div class="bg-darker p-3 rounded-md flex-1">
+          <!-- 输入音频播放器 -->
+
+          <div class="bg-gray-900 rounded-lg p-4 text-white relative">
+            <!-- 右上角清空按钮（修改后） -->
+            <button v-if="loadedAudio"
+              class="absolute top-2 right-2 w-6 h-6 border border-gray-400 rounded bg-transparent text-gray-200 flex items-center justify-center cursor-pointer hover:border-red-500 hover:text-red-500 transition-colors z-20"
+              @click="clearAudio" title="清空音频">
+              ×
+            </button>
+            <!-- 加载状态 -->
+            <div v-if="isLoading"
+              class="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-80 z-10">
+              <div class="flex flex-col items-center">
+                <i class="fa fa-circle-o-notch fa-spin text-primary text-2xl mb-2"></i>
+                <span>加载音频中...</span>
+              </div>
+            </div>
+
+            <!-- 错误提示 -->
+            <div v-if="errorMessage"
+              class="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-90 z-10">
+              <div class="text-red-400 text-center p-4">
+                <i class="fa fa-exclamation-circle mb-2"></i>
+                <p>{{ errorMessage }}</p>
+              </div>
+            </div>
+
+            <!-- 波形容器 - 使用动态ID -->
+            <div class="w-full h-32 relative mb-4">
+              <div :id="waveformId" class="w-full h-full"></div>
+            </div>
+
+            <div class="flex items-center justify-center gap-8 mb-3" v-if="loadedAudio">
+              <button
+                class="control-btn bg-transparent border-none text-white cursor-pointer text-base transition-colors duration-200 hover:text-purple-400"
+                @click="rewind">
+                <i class="fa fa-step-backward"></i>
+              </button>
+              <button
+                class="w-9 h-9 rounded-full bg-purple-700 flex items-center justify-center text-lg text-white cursor-pointer hover:bg-purple-600 transition-colors duration-200"
+                @click="togglePlay">
+                <i class="fa" :class="isPlaying ? 'fa-pause' : 'fa-play'"></i>
+              </button>
+              <button
+                class="control-btn bg-transparent border-none text-white cursor-pointer text-base transition-colors duration-200 hover:text-purple-400"
+                @click="forward">
+                <i class="fa fa-step-forward"></i>
+              </button>
+
+              <span class="text-sm text-gray-400">{{ currentTimeFormatted }} / {{ durationFormatted }}</span>
+
+              <select class="bg-gray-800 border-none text-white px-2 py-1 rounded cursor-pointer" v-model="playbackRate"
+                @change="updatePlaybackRate">
+                <option value="0.5">0.5x</option>
+                <option value="1">1x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2x</option>
+              </select>
+            </div>
+
+            <div class="flex gap-2.5 mt-2.5 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50"
+              v-if="!loadedAudio">
+              <label
+                class="bg-gray-800 text-white px-3 py-1.5 rounded cursor-pointer flex items-center gap-1.5 hover:bg-gray-700 transition-colors duration-200">
+                <i class="fa fa-upload"></i> 上传音频
+                <input type="file" accept="audio/*" @change="handleFileUpload" class="hidden" />
+              </label>
+            </div>
+          </div>
+
+          <!-- 操作按钮：Clear + Submit -->
+          <div v-if="!currentTask || currentTask.status !== 'running'" class="flex gap-2 mt-2">
+            <button @click="uploadAudio(1)"
+              class="w-full px-4 py-2 bg-primary text-white hover:bg-purple-500 rounded-md transition-colors">
+              分离
+            </button>
+          </div>
+
+    
+
+          <!-- 2. 进度展示区域（任务启动后显示） -->
+          <div v-if="currentTask" class="p-4 rounded-lg shadow-sm border border-gray-200 space-y-4 mt-2">
+            <div class="flex justify-between items-center">
+              <span class="font-medium">任务ID：{{ currentTask.task_id }}</span>
+              <span class="text-sm text-gray-500">
+                状态：{{ formatStatus(currentTask.status) }}
+              </span>
+            </div>
+
+            <!-- 进度条 -->
+            <div class="space-y-2">
+              <div class="flex justify-between text-sm">
+                <span>进度</span>
+                <span>{{ currentTask.progress }}%</span>
+              </div>
+              <div class="w-full h-4 bg-gray-200 rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-300" :class="getProgressBarClass()"
+                  :style="{ width: currentTask.progress + '%' }"></div>
+              </div>
+            </div>
+
+            <!-- 时间信息 -->
+            <div class="text-sm text-gray-500">
+              <p>启动时间：{{ currentTask.start_time }}</p>
+              <p v-if="currentTask.end_time">
+                结束时间：{{ currentTask.end_time }}
+              </p>
+            </div>
+
+            <!-- 错误提示（任务失败时显示） -->
+            <div v-if="currentTask.error" class="text-red-500 text-sm bg-red-50 p-2 rounded">
+              错误信息：{{ currentTask.error }}
+            </div>
+          </div>
+        </div>
+
+        <!-- 输出音频区域 -->
+        <!-- 输出音频区域（仅保留波形、播放/暂停、下载） -->
+        <div class="flex-1 flex flex-col gap-4 mt-6">
+          <h3 class="text-lg font-medium text-primary">
+            切割结果（共{{ resultList.length }}个音频）
+          </h3>
+
+          <!-- 循环渲染每个输出音频 -->
+          <div v-for="(item, index) in resultList" :key="item.waveformId" class="bg-darker p-4 rounded-md relative">
+            <!-- 1. 右上角下载按钮（完全参考输入音频的清除按钮样式，仅换图标） -->
+            <button
+              class="absolute top-2 right-2 w-6 h-6 border border-gray-400 rounded bg-transparent text-gray-200 flex items-center justify-center cursor-pointer hover:border-primary hover:text-primary transition-colors z-20"
+              @click="downloadOutputAudio(index)" title="下载音频" :disabled="item.isLoading">
+              <i class="fa fa-download"></i>
+              <!-- 下载图标 -->
+            </button>
+
+            <!-- 2. 波形显示容器 -->
+            <div :id="item.waveformId" class="w-full h-24 mb-3"></div>
+
+            <!-- 3. 核心控制区（仅播放/暂停 + 进度时间） -->
+            <div class="flex items-center justify-center gap-4">
+              <!-- 播放/暂停按钮（样式与输入音频一致） -->
+              <button
+                class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white hover:bg-purple-500 transition-colors"
+                @click="togglePlayOutput(index)" :disabled="item.isLoading">
+                <i class="fa" :class="item.isPlaying ? 'fa-pause' : 'fa-play'"></i>
+              </button>
+
+              <!-- 进度时间显示（简化，仅保留核心信息） -->
+              <span class="text-sm text-gray-400">
+                {{ formatTime(item.currentTime) }} / {{
+                formatTime(item.duration) }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 创建 Vue 应用
+    const {
+      createApp,
+      ref,
+      onMounted,
+      onUnmounted,
+      computed,
+      watch,
+      nextTick,
+    } = Vue;
+
+    // 生成唯一ID用于波形容器
+    let waveformIdCounter = 0;
+    const generateWaveformId = () => `waveform-${waveformIdCounter++}`;
+    let outputWaveformIdCounter = 0;
+    let split_type = 1; // 1: 切割角色声音（合并同角色所有声音），2：切割角色声音（保留时间线）
+    // 生成输出音频的唯一波形ID
+    const generateOutputWaveformId = () =>
+      `output-waveform-${outputWaveformIdCounter++}`;
+
+    /**
+     * 从任务 output 中提取所有“合并完成：xxxx”格式的路径
+     * @param {string} output - 后台返回的 task_info.output 字符串
+     * @returns {Object} - { success: boolean, paths: Array<string>, message: string, rawLines: Array<string> }
+     */
+    function extractAllMergePathsFromOutput(output) {
+      // 1. 基础校验：output 为空直接返回
+      if (!output || typeof output !== "string") {
+        return {
+          success: false,
+          paths: [], // 空数组，方便前端统一处理
+          message: "未获取到有效的任务输出日志",
+          rawLines: [], // 原始目标行（调试用）
+        };
+      }
+
+      // 2. 按换行符分割（兼容 \r\n 和 \n）
+      const outputLines = output.split(/\r?\n/);
+
+      // 3. 筛选所有“合并完成：”开头的行（去空格后匹配，避免行首空格影响）
+      const rawTargetLines = outputLines
+        .map((line) => line.trim()) // 先去每行首尾空格
+        .filter((trimmedLine) => trimmedLine.startsWith("result:"));
+
+      // 4. 若没有任何目标行，返回提示
+      if (rawTargetLines.length === 0) {
+        return {
+          success: false,
+          paths: [],
+          message:
+            "未找到任何“result:”的结果路径（任务可能未完成或输出格式异常）",
+          rawLines: [],
+        };
+      }
+
+      // 5. 逐个提取路径，并过滤无效路径
+      const validPaths = [];
+      rawTargetLines.forEach((line, index) => {
+        try {
+          // 分割“合并完成：”，取后面的内容作为路径
+          const pathPart = line.split("result:")[1];
+          if (!pathPart) return; // 若分割后无路径，跳过
+
+          // 去空格后校验是否为空（排除“合并完成：  ”这种无效行）
+          const trimmedPath = pathPart.trim();
+          if (trimmedPath === "") return;
+
+          // 关键修改：只保留 output 后面的部分
+          const outputIndex = trimmedPath.search(/output[\\/]/i);
+          let relativePath = trimmedPath;
+          if (outputIndex !== -1) {
+            relativePath = trimmedPath.substring(outputIndex);
+          }
+
+          // 统一路径格式：Windows 反斜杠 \ 转为 /（方便前端展示和 URL 拼接）
+          const formattedPath = relativePath.replace(/\\/g, "/");
+          validPaths.push(location.origin + "/" + formattedPath);
+        } catch (error) {
+          // 单个行处理失败不影响整体，仅打印调试日志
+          console.warn(
+            `处理第 ${index + 1} 个合并路径时出错：`,
+            error,
+            "原始行：",
+            line
+          );
+        }
+      });
+
+      // 6. 处理“有目标行但无有效路径”的情况
+      if (validPaths.length === 0) {
+        return {
+          success: false,
+          paths: [],
+          message: "找到目标行，但未提取到有效路径（格式异常）",
+          rawLines: rawTargetLines, // 返回原始行，方便调试
+        };
+      }
+
+      // 新增：按 speaker_spkxx_merged 中的数字排序
+      // 正则匹配 speaker_spk 后面的数字（如从 speaker_spk02_merged 中提取 2）
+      const spkNumberRegex = /speaker_spk(\d+)_merged/;
+
+      // 排序逻辑：提取数字并比较
+      validPaths.sort((a, b) => {
+        // 从路径中提取数字，默认用 Infinity 确保不匹配的路径排在最后
+        const getSpkNumber = (path) => {
+          const match = path.match(spkNumberRegex);
+          return match ? Number(match[1]) : Infinity;
+        };
+
+        return getSpkNumber(a) - getSpkNumber(b);
+      });
+
+      // 7. 成功返回所有有效路径
+      return {
+        success: true,
+        paths: validPaths, // 所有有效路径组成的数组（如 ["D:/output/spk00.mp3", "D:/output/spk01.mp3"]）
+        message: `共提取到 ${validPaths.length} 个合并路径`,
+        rawLines: rawTargetLines, // 原始目标行（可选，用于调试）
+      };
+    }
+   
+    createApp({
+      setup() {
+        // 生成唯一ID
+        const waveformId = generateWaveformId();
+        const activeTab = ref("task1");
+        // 状态管理
+        const isPlaying = ref(false);
+        const currentTime = ref(0);
+        const duration = ref(0);
+        const playbackRate = ref(1);
+        const isLoading = ref(false);
+        const loadedAudio = ref(false);
+        const errorMessage = ref("");
+        const fileInput = ref(null);
+        let wavesurfer = null;
+        let audioContext = null;
+        const uploadedFile = ref(null); // 新增：暂存用户上传的原始音频文件
+
+        // 当前任务信息（轮询返回的状态）
+        const currentTask = ref(null);
+        // 轮询定时器ID（用于停止轮询）
+        const pollTimer = ref(null);
+        // 是否有任务正在运行
+        const isTaskRunning = ref(false);
+        const resultList = ref([]);
+
+        // 格式化时间显示
+        const formatTime = (seconds) => {
+          if (isNaN(seconds)) return "0:00";
+          const mins = Math.floor(seconds / 60);
+          const secs = Math.floor(seconds % 60);
+          return `${mins}:${secs.toString().padStart(2, "0")}`;
+        };
+
+        const currentTimeFormatted = computed(() =>
+          formatTime(currentTime.value)
+        );
+        const durationFormatted = computed(() => formatTime(duration.value));
+
+        // 初始化wavesurfer
+        const initWaveSurfer = () => {
+          // 如果已有实例，先销毁
+          if (wavesurfer) {
+            destroyWaveSurfer();
+          }
+
+          try {
+            // 创建音频上下文
+            if (!audioContext || audioContext.state === "closed") {
+              audioContext = new (window.AudioContext ||
+                window.webkitAudioContext)();
+            }
+
+            // 初始化波形绘制器
+            wavesurfer = WaveSurfer.create({
+              container: `#${waveformId}`,
+              waveColor: "#bbb",
+              progressColor: "#7c4dff",
+              cursorColor: "#fff",
+              barWidth: 2,
+              barGap: 1,
+              height: 120,
+              barRadius: 1,
+              responsive: true,
+              partialRender: true,
+              normalize: true,
+            });
+
+            // 绑定事件监听器
+            bindWaveSurferEvents();
+          } catch (err) {
+            console.error("初始化WaveSurfer失败:", err);
+            errorMessage.value = "初始化播放器失败，请刷新页面重试";
+          }
+        };
+
+        const initOutputWaveSurfer = (item) => {
+          // 销毁旧实例（避免重复）
+          if (item.wavesurfer) {
+            item.wavesurfer.unAll();
+            item.wavesurfer.destroy();
+          }
+
+          try {
+            // 初始化输出音频的 wavesurfer（简化配置，仅保留核心参数）
+            const wavesurfer = WaveSurfer.create({
+              container: `#${item.waveformId}`,
+              waveColor: "#666", // 输出波形颜色稍浅，与输入区分
+              progressColor: "#7c4dff",
+              cursorColor: "#fff",
+              barWidth: 2,
+              barGap: 1,
+              height: 96, // 输出波形高度适配简化布局
+              barRadius: 1,
+              responsive: true,
+              partialRender: true, // 优化性能：仅渲染可视区域波形
+              normalize: true,
+            });
+
+            item.wavesurfer = wavesurfer;
+            item.isLoading = true; // 此修改不会触发watch（无deep）
+
+            // 绑定核心事件（仅保留加载、进度、结束、错误）
+            wavesurfer.on("ready", () => {
+              item.isLoading = false;
+              item.duration = wavesurfer.getDuration();
+              item.errorMessage = "";
+            });
+
+            wavesurfer.on("audioprocess", (time) => {
+              item.currentTime = time; // 实时更新播放进度
+            });
+
+            wavesurfer.on("finish", () => {
+              item.isPlaying = false;
+              item.currentTime = 0;
+              wavesurfer.seekTo(0); // 播放结束后重置到开头
+            });
+
+            wavesurfer.on("error", (err) => {
+              item.isLoading = false;
+              item.errorMessage = "加载失败：" + (err || "未知错误");
+              console.error(`输出音频${item.waveformId}错误:`, err);
+            });
+
+            // 加载音频（需确保后端返回的 path 是前端可访问的 URL）
+            wavesurfer.load(item.path);
+            item.isLoading = true;
+          } catch (err) {
+            item.isLoading = false;
+            item.errorMessage = "初始化播放器失败";
+            console.error(`初始化输出音频${item.waveformId}失败:`, err);
+          }
+        };
+
+        // -------------------------- 输出音频：播放/暂停（唯一控制） --------------------------
+        const togglePlayOutput = (index) => {
+          const item = resultList.value[index];
+          if (!item.wavesurfer || item.isLoading) return;
+
+          // 处理浏览器自动播放限制（复用输入音频逻辑）
+          if (audioContext.state === "suspended") {
+            audioContext.resume().then(() => {
+              item.wavesurfer.playPause();
+              item.isPlaying = !item.isPlaying;
+            });
+          } else {
+            item.wavesurfer.playPause();
+            item.isPlaying = !item.isPlaying;
+          }
+        };
+
+        // -------------------------- 输出音频：下载功能（参考清除按钮样式） --------------------------
+        const downloadOutputAudio = (index) => {
+          const item = resultList.value[index];
+          if (!item.path || item.isLoading) return;
+
+          try {
+            // 动态创建 <a> 标签触发下载
+            const link = document.createElement("a");
+            link.href = item.path; // 后端提供的音频访问 URL
+            // 提取文件名（从路径中截取，如 "spk00.mp3"）
+            const fileName = item.path.split("/").pop().split("\\").pop();
+            link.download = fileName; // 下载时的默认文件名
+            document.body.appendChild(link);
+            link.click(); // 模拟点击下载
+            document.body.removeChild(link); // 下载后移除临时标签
+          } catch (err) {
+            alert("下载失败：" + err.message);
+            console.error("音频下载错误:", err);
+          }
+        };
+
+        // -------------------------- 输出音频：批量初始化（监听 resultList 变化） --------------------------
+        // 替换原有的 watch(resultList, ...) 逻辑
+        watch(resultList, (newList, oldList) => {
+          // 步骤1：清理「旧列表有但新列表没有」的元素的实例（避免全部销毁）
+          const newItemIds = newList.map((item) => item.id); // 新列表的所有item id
+          oldList.forEach((oldItem) => {
+            // 若旧item不在新列表中，销毁其wavesurfer实例
+            if (!newItemIds.includes(oldItem.id) && oldItem.wavesurfer) {
+              oldItem.wavesurfer.unAll();
+              oldItem.wavesurfer.destroy();
+              oldItem.wavesurfer = null; // 释放引用
+              oldItem.initialized = false; // 重置标记
+            }
+          });
+
+          // 步骤2：nextTick后，只初始化「新列表中未初始化」的item
+          nextTick(() => {
+            newList.forEach((item) => {
+              // 跳过已初始化的item + 确保容器存在
+              if (
+                item.initialized ||
+                !document.getElementById(item.waveformId)
+              ) {
+                return;
+              }
+
+              // 初始化波形（修改item属性不会触发watch，因无deep）
+              initOutputWaveSurfer(item);
+              // 初始化完成后标记为true，避免重复执行
+              item.initialized = true;
+            });
+          });
+        });
+
+        // 绑定WaveSurfer事件
+        const bindWaveSurferEvents = () => {
+          if (!wavesurfer) return;
+
+          // 监听播放进度
+          wavesurfer.on("audioprocess", (time) => {
+            currentTime.value = time;
+          });
+
+          // 监听播放结束
+          wavesurfer.on("finish", () => {
+            isPlaying.value = false;
+          });
+
+          // 监听音频加载完成
+          wavesurfer.on("ready", () => {
+            duration.value = wavesurfer.getDuration();
+            isLoading.value = false;
+            errorMessage.value = "";
+            console.log("音频加载完成，时长：", duration.value, "秒");
+          });
+
+          // 监听错误
+          wavesurfer.on("error", (err) => {
+            console.error("WaveSurfer错误:", err);
+            errorMessage.value = "音频加载失败: " + (err || "未知错误");
+            isLoading.value = false;
+          });
+        };
+
+        // 销毁WaveSurfer实例
+        const destroyWaveSurfer = () => {
+          if (wavesurfer) {
+            // 移除所有事件监听器
+            wavesurfer.unAll();
+            // 停止播放并销毁实例
+            wavesurfer.stop();
+            wavesurfer.destroy();
+            wavesurfer = null;
+          }
+        };
+
+        // 组件挂载时初始化
+        onMounted(() => {
+          initWaveSurfer();
+        });
+
+        // 组件卸载时清理
+        onUnmounted(() => {
+          destroyWaveSurfer();
+          if (audioContext && audioContext.state !== "closed") {
+            audioContext
+              .close()
+              .catch((err) => console.error("关闭音频上下文错误:", err));
+          }
+
+          // 清理输出音频所有实例
+          resultList.value.forEach((item) => {
+            if (item.wavesurfer) {
+              item.wavesurfer.unAll();
+              item.wavesurfer.destroy();
+            }
+          });
+
+          // 停止轮询
+          if (pollTimer.value) clearInterval(pollTimer.value);
+        });
+
+        // 处理文件上传
+        const handleFileUpload = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          // 验证文件类型
+          if (!file.type.startsWith("audio/")) {
+            errorMessage.value = "请上传音频文件";
+            // 重置文件输入，允许重新选择相同文件
+            if (fileInput.value) {
+              fileInput.value.value = "";
+            }
+            return;
+          }
+
+          // 关键：保存原始文件到 uploadedFile
+          uploadedFile.value = file; // 新增这行
+          // 重置状态
+          isLoading.value = true;
+          errorMessage.value = "";
+          currentTime.value = 0;
+          isPlaying.value = false;
+
+          try {
+            // 确保WaveSurfer已初始化
+
+            initWaveSurfer();
+
+            // 加载新的音频文件
+            wavesurfer.loadBlob(file);
+            console.log("开始加载音频文件:", file.name);
+
+            // 重置文件输入，允许重新选择相同文件
+            if (fileInput.value) {
+              fileInput.value.value = "";
+            }
+            loadedAudio.value = true;
+          } catch (err) {
+            console.error("加载音频失败:", err);
+            errorMessage.value = "加载音频失败: " + err.message;
+            isLoading.value = false;
+          }
+        };
+
+        // 清除音频
+        const clearAudio = () => {
+          destroyWaveSurfer();
+          currentTime.value = 0; // 重置当前时间
+          duration.value = 0; // 重置总时长
+          isPlaying.value = false; // 重置播放状态
+          errorMessage.value = ""; // 清空错误提示
+          loadedAudio.value = false; // 新增：置为false，让右上角X按钮消失
+          // 重置文件输入（允许重新选择相同文件）
+          if (fileInput.value) {
+            fileInput.value.value = "";
+          }
+        };
+
+        // 播放/暂停切换
+        const togglePlay = () => {
+          if (!wavesurfer) return;
+
+          // 处理浏览器自动播放限制
+          if (audioContext.state === "suspended") {
+            audioContext.resume().then(() => {
+              wavesurfer.playPause();
+              isPlaying.value = !isPlaying.value;
+            });
+          } else {
+            wavesurfer.playPause();
+            isPlaying.value = !isPlaying.value;
+          }
+        };
+
+        // 快退
+        const rewind = () => {
+          if (wavesurfer) {
+            wavesurfer.skip(-5);
+          }
+        };
+
+        // 快进
+        const forward = () => {
+          if (wavesurfer) {
+            wavesurfer.skip(5);
+          }
+        };
+
+        // 更新播放速度
+        const updatePlaybackRate = () => {
+          if (wavesurfer) {
+            wavesurfer.setPlaybackRate(Number(playbackRate.value));
+          }
+        };
+
+        const uploadAudio = async (splitType) => {
+          split_type = splitType || 1; // 默认值为1
+          // 边界检查：确保有已上传的文件
+          if (!uploadedFile.value || !loadedAudio.value) {
+            errorMessage.value = "请先上传音频文件";
+            return;
+          }
+
+          try {
+            // 直接使用原始文件创建 FormData（无需通过 WaveSurfer 获取 Blob）
+            const formData = new FormData();
+            // 用原始文件名（更准确），替代固定的 "uploaded-audio.wav"
+            formData.append(
+              "file",
+              uploadedFile.value,
+              uploadedFile.value.name
+            );
+
+            // 调用后端接口上传
+            const response = await axios.post("/api/upload-audio", formData, {
+              headers: { "Content-Type": "multipart/form-data" },
+            });
+
+            // 处理响应
+            const { success, message, save_path } = response.data;
+            if (success) {
+              startTask(save_path);
+            } else {
+              errorMessage.value = "上传失败：" + message;
+            }
+          } catch (err) {
+            console.error("音频上传失败：", err);
+            errorMessage.value = "上传异常，请重试";
+          }
+        };
+
+        // 重置任务状态（切换脚本或任务完成后调用）
+        const resetTask = () => {
+          currentTask.value = null;
+          isTaskRunning.value = false;
+          // 停止轮询
+          if (pollTimer.value) {
+            clearInterval(pollTimer.value);
+            pollTimer.value = null;
+          }
+        };
+
+        // 启动轮询：获取任务进度
+        const startPolling = (taskId) => {
+          // 停止之前的轮询（防止重复）
+          if (pollTimer.value) clearInterval(pollTimer.value);
+
+          // 每秒请求一次进度
+          pollTimer.value = setInterval(async () => {
+            try {
+              const res = await axios.get(`/api/tasks/${taskId}`);
+              currentTask.value = res.data;
+
+              // if (res.data.status === "completed") {
+              // 提取路径并初始化输出音频列表（简化结构）
+              const extractResult = extractAllMergePathsFromOutput(
+                res.data.output
+              );
+              if (extractResult.success && extractResult.paths.length > 0) {
+                resultList.value = extractResult.paths.map((path) => ({
+                  id: `output-item-${Date.now()}-${Math.random()
+                    .toString(36)
+                    .slice(2)}`, // 唯一标识
+                  path: path, // 音频URL（后端返回的可访问地址）
+                  waveformId: generateOutputWaveformId(), // 唯一波形容器ID
+                  wavesurfer: null, // wavesurfer实例
+                  isPlaying: false, // 播放状态
+                  currentTime: 0, // 当前进度
+                  duration: 0, // 总时长
+                  isLoading: false, // 加载状态
+                  errorMessage: "", // 错误信息
+                  initialized: false, // 初始化标记：避免重复初始化
+                }));
+              } else {
+                resultList.value = [];
+                // errorMessage.value = extractResult.message;
+              }
+              // }
+
+              // 任务完成/失败时，停止轮询
+              if (["completed", "failed"].includes(res.data.status)) {
+                isTaskRunning.value = false;
+                clearInterval(pollTimer.value);
+                pollTimer.value = null;
+              }
+            } catch (err) {
+              clearInterval(pollTimer.value);
+              pollTimer.value = null;
+              alert(
+                `获取进度失败：${err.response?.data?.detail || err.message}`
+              );
+            }
+          }, 2000); // 轮询间隔：1000ms（1秒），可根据需求调整
+        };
+
+        const startTask = async (filePath) => {
+          // 重置之前的任务
+          resetTask();
+
+          try {
+            // 调用后端启动任务接口
+            const res = await axios.post("/api/tasks", {
+              script_name:"speech_separation.py",
+              script_args: ["--input-path=" + filePath],
+            });
+
+            // 保存当前任务信息
+            currentTask.value = res.data;
+            isTaskRunning.value = true;
+
+            // 启动轮询（每秒1次，可调整间隔）
+            startPolling(res.data.task_id);
+          } catch (err) {
+            alert(
+              `启动任务失败：${err.response?.data?.detail || err.message}`
+            );
+          }
+        };
+
+        // -------------------------- 工具函数 --------------------------
+        // 格式化任务状态（中文显示）
+        const formatStatus = (status) => {
+          const map = {
+            running: "运行中",
+            completed: "已完成",
+            failed: "已失败",
+          };
+          return map[status] || status;
+        };
+
+        // 根据进度获取进度条颜色
+        const getProgressBarClass = () => {
+          const progress = currentTask.value?.progress || 0;
+          // if (progress < 30) return "bg-purple-200";
+          // if (progress < 70) return "bg-purple-300";
+          return "bg-purple-500";
+        };
+
+        const go = () => {
+          window.location.href = "/static/solo.html";
+        };
+        return {
+          currentTask,
+          formatStatus,
+          getProgressBarClass,
+          activeTab,
+          waveformId,
+          isPlaying,
+          currentTime,
+          duration,
+          playbackRate,
+          isLoading,
+          errorMessage,
+          loadedAudio,
+          fileInput,
+          currentTimeFormatted,
+          durationFormatted,
+          handleFileUpload,
+          togglePlay,
+          rewind,
+          forward,
+          updatePlaybackRate,
+          clearAudio,
+          uploadAudio,
+          // 输出音频相关（简化后）
+          resultList,
+          formatTime,
+          togglePlayOutput,
+          downloadOutputAudio,
+          go,
+        };
+      },
+    }).mount("#app");
+  </script>
+</body>
+
+</html>

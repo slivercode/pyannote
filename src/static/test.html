@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Voice-Recognition: 人声识别</title>
+    <link rel="icon" href="favicon.png" type="image/png" sizes="32x32" />
+    <!-- 引入Vue3 -->
+    <script src="./vue.global.prod.js"></script>
+    <!-- 引入Axios（处理HTTP请求） -->
+    <script src="./axios.min.js"></script>
+    <!-- 引入Tailwind CSS（快速美化界面，可选） -->
+    <script src="./tailwindcss.js"></script>
+    <!-- 引入Font Awesome -->
+    <link href="./font-awesome.min.css" rel="stylesheet" />
+    <!-- 配置Tailwind自定义颜色 -->
+
+    <!-- 配置Tailwind自定义颜色 -->
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: "#7c4dff",
+              dark: "#121212",
+              darker: "#212121",
+            },
+          },
+        },
+      };
+    </script>
+
+    <style type="text/tailwindcss">
+      @layer utilities {
+        .content-auto {
+          content-visibility: auto;
+        }
+        .audio-wave {
+          stroke-linecap: round;
+        }
+      }
+    </style>
+  </head>
+
+  <body class="bg-dark text-gray-200 font-sans m-0 p-5 md:p-6">
+    <!-- Vue 应用挂载容器 -->
+    <div id="app" class="max-w-6xl mx-auto">
+      <!-- 顶部标签栏 -->
+      <div class="flex gap-5 border-b-2 border-primary mb-5">
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task1' }"
+        >
+          长音频或批量（无多人声重叠）
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task2' }"
+          @click="go()"
+        >
+          工具-音(视)频合并
+        </div>
+        <!-- 新增：帮助按钮（靠右显示，使用flex-grow推到右侧） -->
+        <div class="flex-grow flex justify-end">
+          <a
+            href="https://www.yuque.com/choui/cah18i/tv4wgxsx3kua7ufb?singleDoc# 《软件安装》"
+            target="_blank"
+            class="flex items-center gap-1 px-3 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+            title="查看帮助文档"
+          >
+            <i class="fa fa-question-circle"></i>
+            <span class="text-sm">帮助</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- 语音分离任务内容（默认显示） -->
+      <div v-if="activeTab === 'task1'">
+        <h2 class="text-center text-primary mb-3 text-2xl font-semibold">
+          识别出现的不同人声，并将同一人声合并为一个音频文件
+        </h2>
+
+        <!-- 音频区域 -->
+        <div class="flex flex-col gap-5 mb-5">
+          <!-- 输入音频区域 -->
+          <div class="bg-darker p-3 rounded-md flex-1">
+            <!-- 文件路径输入区域 -->
+            <div
+              class="flex items-center mb-4 border-0 border-b-2 border-purple-500 p-3"
+              style="border-bottom-width: 1px"
+            >
+              <!-- <span class="mr-2 text-gray-300">选择文件：</span> -->
+              <!-- 文件上传控件，限制音视频格式 -->
+              <input
+                type="file"
+                accept="audio/*,video/*"
+                class="bg-transparent outline-none text-sm flex-1 ml-1 text-gray-300"
+                @change="handleFileSelect"
+              />
+              <!-- 显示已选文件名 -->
+              <span class="ml-3 text-sm text-gray-400" v-if="selectedFile">
+                {{ selectedFile.name }}
+              </span>
+              <!-- 时长超限提示 -->
+              <span class="ml-3 text-sm text-red-500" v-if="durationError">
+                ⚠️ 时长超过1分钟，无法上传
+              </span>
+            </div>
+
+            <!-- 开关 -->
+            <div class="flex items-center p-3">
+              <span class="mr-2 text-gray-300">字幕识别</span>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="sr-only peer"
+                  v-model="translate"
+                />
+                <div
+                  class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"
+                ></div>
+              </label>
+            </div>
+            <!-- 开关 -->
+            <div class="flex items-center p-3">
+              <span class="mr-2 text-gray-300"
+                >按角色提取音（视）频-不保留时间线
+              </span>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="sr-only peer"
+                  v-model="extractSpeech"
+                />
+                <div
+                  class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"
+                ></div>
+              </label>
+              <p class="text-sm text-gray-400 ml-3 flex items-center">
+                <i class="fa fa-info-circle text-primary mr-1.5"></i>
+                音频内只有该角色说话，不含空音频
+              </p>
+            </div>
+
+            <div class="flex items-center p-3">
+              <span class="mr-2 text-gray-300"
+                >按角色提取音（视）频-保留时间线
+              </span>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="sr-only peer"
+                  v-model="extractSpeechTimeline"
+                />
+                <div
+                  class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"
+                ></div>
+              </label>
+              <p class="text-sm text-gray-400 ml-3 flex items-center">
+                <i class="fa fa-info-circle text-primary mr-1.5"></i>
+                音频内只有该角色说话，含空音频(其他人说话部分都为空)
+              </p>
+            </div>
+
+            <!-- 新增1：说话人数量（输入框） -->
+            <div class="flex items-center p-3 mt-1">
+              <span class="mr-2 text-gray-300 min-w-[120px]">说话人数量：</span>
+              <input
+                type="number"
+                v-model.number="speakerCount"
+                min="1"
+                placeholder="指定固定数量（可选）"
+                class="bg-darker border border-gray-600 rounded px-2 py-1 text-sm flex-1 max-w-[200px] focus:border-primary outline-none transition-colors"
+              />
+              <p class="text-sm text-gray-400 ml-3 flex items-center">
+                <i class="fa fa-info-circle text-primary mr-1.5"></i>
+                知道说话人数量时填写，提升识别准确率，优先级高于数量范围，0为自动检测
+              </p>
+            </div>
+
+            <!-- 新增2：说话人数量范围（最小值+最大值） -->
+            <div class="flex items-center p-3">
+              <span class="mr-2 text-gray-300 min-w-[120px]">数量范围：</span>
+              <div class="flex items-center gap-3 flex-1 max-w-[300px]">
+                <div class="flex-1">
+                  <input
+                    type="number"
+                    v-model.number="speakerMin"
+                    min="1"
+                    placeholder="最小值"
+                    class="bg-darker border border-gray-600 rounded px-2 py-1 text-sm w-full focus:border-primary outline-none transition-colors"
+                  />
+                </div>
+                <span class="text-gray-400">-</span>
+                <div class="flex-1">
+                  <input
+                    type="number"
+                    v-model.number="speakerMax"
+                    :min="speakerMin"
+                    placeholder="最大值"
+                    class="bg-darker border border-gray-600 rounded px-2 py-1 text-sm w-full focus:border-primary outline-none transition-colors"
+                  />
+                </div>
+              </div>
+              <p class="text-sm text-gray-400 ml-3 flex items-center">
+                <i class="fa fa-info-circle text-primary mr-1.5"></i>
+                知道数量范围时填写，提升识别准确率，优先级低于数量范围，0为自动检测
+              </p>
+            </div>
+            <!-- 操作按钮：Clear + Submit -->
+            <div
+              v-if="!currentTask || currentTask.status !== 'running'"
+              class="flex gap-2 mt-2"
+            >
+              <button
+                @click="startTask"
+                class="w-full px-4 py-2 bg-primary text-white hover:bg-purple-500 rounded-md transition-colors"
+              >
+                识别
+              </button>
+            </div>
+
+            <!-- 2. 进度展示区域（任务启动后显示） -->
+            <div
+              v-if="currentTask"
+              class="p-4 rounded-lg shadow-sm border border-gray-200 space-y-4 mt-2"
+            >
+              <div class="flex justify-between items-center">
+                <span class="font-medium"
+                  >任务ID：{{ currentTask.task_id }}</span
+                >
+                <span class="text-sm text-gray-500">
+                  状态：{{ formatStatus(currentTask.status) }}
+                </span>
+              </div>
+
+              <!-- 进度条 -->
+              <div class="space-y-2">
+                <div class="flex justify-between text-sm">
+                  <span>进度</span>
+                  <span>{{ currentTask.progress }}%</span>
+                </div>
+                <div
+                  class="w-full h-4 bg-gray-200 rounded-full overflow-hidden"
+                >
+                  <div
+                    class="h-full rounded-full transition-all duration-300"
+                    :class="getProgressBarClass()"
+                    :style="{ width: currentTask.progress + '%' }"
+                  ></div>
+                </div>
+              </div>
+
+              <!-- 时间信息 -->
+              <div class="text-sm text-gray-500">
+                <p>启动时间：{{ currentTask.start_time }}</p>
+                <p v-if="currentTask.end_time">
+                  结束时间：{{ currentTask.end_time }}
+                </p>
+              </div>
+
+              <!-- 错误提示（任务失败时显示） -->
+              <div
+                v-if="currentTask.error"
+                class="text-red-500 text-sm bg-red-50 p-2 rounded"
+              >
+                错误信息：{{ currentTask.error }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 输出音频区域 -->
+          <!-- 输出音频区域（仅保留波形、播放/暂停、下载） -->
+          <div class="flex-1 flex flex-col gap-4 mt-6">
+            <h3 class="text-lg font-medium text-primary">
+              切割结果
+              <!-- resultList.length>0?resultList[0].path:""  -->
+            </h3>
+            <!-- 新增1：分离角色数量显示 -->
+            <div class="text-sm text-gray-300">
+              成功分离
+              <span class="text-primary font-semibold"
+                >{{ vocalCount || 0 }}</span
+              >
+              个角色
+            </div>
+
+            <!-- 新增2：最终文件夹显示及打开按钮 -->
+            <div
+              v-if="finalFolder"
+              class="flex items-center gap-2 text-sm mt-1"
+            >
+              <span class="text-gray-400">最终文件夹：</span>
+              <a
+                @click="openTargetFolder(finalFolder)"
+                class="text-primary hover:text-purple-400 cursor-pointer flex items-center gap-1"
+              >
+                {{ finalFolder }}
+                <i class="fa fa-folder-open-o"></i>
+              </a>
+            </div>
+
+            <!-- 新增3：说话人分组显示（核心功能，含音视频播放） -->
+            <div v-if="speakerDirs.length > 0" class="mt-4 space-y-4">
+              <!-- 遍历每个说话人组 -->
+              <div
+                v-for="(speakerFile, idx) in speakerDirs"
+                :key="idx"
+                class="bg-darker rounded-md p-4"
+              >
+                <!-- 说话人组标题（含路径，可点击打开） -->
+                <div class="flex justify-between items-center mb-3">
+                  <h4 class="font-medium text-gray-100">
+                    说话人 {{getSpeaker(speakerFile) }}：
+                    <a
+                      @click="openTargetFolder(getTargetPath(speakerFile))"
+                      class="text-primary hover:text-purple-400 text-sm ml-2"
+                    >
+                      {{ getTargetPath(speakerFile) }}
+                      <i class="fa fa-folder-open-o ml-1"></i>
+                    </a>
+                  </h4>
+                </div>
+
+                <!-- 可播放文件列表（最多5个，超出提示） -->
+                <div class="space-y-4">
+                  <!-- 显示前5个可播放文件 -->
+                  <div
+                    class="bg-darker/80 border-0 border-gray-700 rounded p-2 flex flex-col items-center"
+                  >
+                    <!-- 音频播放控件 -->
+                    <audio
+                      v-if="isAudio(speakerFile)"
+                      :src="getFileFullPath(speakerFile)"
+                      controls
+                      controlsList="nodownload"
+                      class="w-full h-10 mb-2"
+                      preload="metadata"
+                    >
+                      您的浏览器不支持音频播放
+                    </audio>
+
+                    <!-- 视频播放控件 -->
+                    <video
+                      v-else-if="isVideo(speakerFile)"
+                      :src="getFileFullPath(speakerFile)"
+                      controls
+                      controlsList="nodownload"
+                      class="w-full max-w-[200px] h-auto mb-2 rounded"
+                      preload="metadata"
+                    >
+                      您的浏览器不支持视频播放
+                    </video>
+
+                    <!-- 不支持的文件类型提示 -->
+                    <div v-else class="text-xs text-gray-500 mb-2">
+                      不支持的文件类型
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 无分组时的提示 -->
+            <div
+              v-else-if="currentTask?.status === 'completed'"
+              class="text-sm text-gray-400 mt-4"
+            >
+              暂无说话人文件数据
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // 创建 Vue 应用
+      const {
+        createApp,
+        ref,
+        onMounted,
+        onUnmounted,
+        computed,
+        watch,
+        nextTick,
+      } = Vue;
+
+      createApp({
+        setup() {
+          const activeTab = ref("task1");
+          const errorMessage = ref("");
+          const uploadedFile = ref(null);
+          const translate = ref(false);
+          const extractSpeech = ref(true);
+          const extractSpeechTimeline = ref(false);
+          // 当前任务信息（轮询返回的状态）
+          const currentTask = ref(null);
+          // 轮询定时器ID（用于停止轮询）
+          const pollTimer = ref(null);
+          // 是否有任务正在运行
+          const isTaskRunning = ref(false);
+
+          // 新增1：响应式变量（角色数量、最终文件夹路径）
+          const vocalCount = ref(null); // 分离的角色数量
+          const finalFolder = ref(null); // 最终保存文件夹路径
+          const speakerDirs = ref([]);
+
+          // 新增：说话人相关参数（默认值：范围1-5，数量为空）
+          const speakerCount = ref(0); // 固定说话人数量（可选）
+          const speakerMin = ref(0); // 数量范围最小值
+          const speakerMax = ref(0); // 数量范围最大值
+
+          // 新增：文件上传相关变量
+          const selectedFile = ref(null); // 存储用户选择的File对象
+          const durationError = ref(false); // 时长是否超限
+          const uploadedFilePath = ref(""); // 存储后端返回的上传后文件路径
+
+          // 处理文件选择，自动校验时长（≤1小时）
+          const handleFileSelect = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // 重置状态
+            selectedFile.value = file;
+            durationError.value = false;
+            uploadedFilePath.value = "";
+
+            // 核心修复：创建音视频元素（视频用 createElement，音频用 new Audio）
+            let media;
+            const fileUrl = URL.createObjectURL(file);
+            if (file.type.startsWith("audio/")) {
+              media = new Audio(fileUrl); // 音频仍用 new Audio()
+            } else {
+              media = document.createElement("video"); // 视频用 createElement 创建
+              media.src = fileUrl; // 为视频元素设置临时 URL
+            }
+
+            // 加载完成后校验时长（60 秒）
+            media.onloadedmetadata = () => {
+              const duration = media.duration;
+              URL.revokeObjectURL(media.src); // 释放临时URL
+              if (duration > 60) {
+                durationError.value = true;
+                selectedFile.value = null; // 清空无效文件
+              }
+            };
+
+            // 加载失败处理
+            media.onerror = () => {
+              alert("文件格式错误，无法读取时长");
+              selectedFile.value = null;
+              URL.revokeObjectURL(media.src);
+            };
+          };
+          // 组件挂载时初始化
+          onMounted(() => {});
+
+          // 组件卸载时清理
+          onUnmounted(() => {
+            // 停止轮询
+            if (pollTimer.value) clearInterval(pollTimer.value);
+          });
+
+          // 新增：判断文件是否为音频（匹配常见音频后缀）
+          const isAudio = (fileName) => {
+            const audioExts = /\.(mp3|wav|flac|aac|m4a)$/i;
+            return audioExts.test(fileName);
+          };
+
+          // 新增：判断文件是否为视频（匹配常见视频后缀）
+          const isVideo = (fileName) => {
+            const videoExts = /\.(mp4|mov|avi|mkv|flv)$/i;
+            return videoExts.test(fileName);
+          };
+
+          // 新增：拼接文件完整路径（说话人目录 + 文件名）
+          const getFileFullPath = (speakerFile) => {
+            // 关键修改：只保留 output 后面的部分
+            const outputIndex = speakerFile.search(/output[\\/]/i);
+            let relativePath = speakerFile;
+            if (outputIndex !== -1) {
+              relativePath = speakerFile.substring(outputIndex);
+            }
+            // 统一路径分隔符为/，确保前端能正确识别
+            return `${location.origin}/${relativePath.replace(
+              /\\/g,
+              "/"
+            )}?v=${Date.now()}`;
+          };
+
+          // 2. 处理逻辑
+          const getTargetPath = (path) => {
+            // 统一分隔符（将\替换为/，避免Windows路径问题）
+            const unifiedPath = path.replace(/\\/g, "/");
+            // 拆分路径为数组 → ["D:", "chouiSpace", "clear_voice_gpu", "output", "对话vocal.WAV", "speaker_audios", "speaker_spk01_merged.wav"]
+            let pathArr = unifiedPath.split("/");
+            pathArr.pop(); // 移除最后一个元素（文件名）
+
+            // 重组为路径字符串
+            return pathArr.join("/");
+          };
+
+          // 2. 处理逻辑
+          const getSpeaker = (speakerFile) => {
+            let spkArr = speakerFile.split("/speaker_");
+            spkArr = spkArr[spkArr.length - 1].split("/merged");
+            // 重组为路径字符串
+            return spkArr[0] == "unknown" ? "混音" : spkArr[0];
+          };
+
+          // 重置任务状态（切换脚本或任务完成后调用）
+          const resetTask = () => {
+            currentTask.value = null;
+            isTaskRunning.value = false;
+            // 停止轮询
+            if (pollTimer.value) {
+              clearInterval(pollTimer.value);
+              pollTimer.value = null;
+            }
+          };
+
+          // 启动轮询：获取任务进度
+          const startPolling = (taskId) => {
+            // 停止之前的轮询（防止重复）
+            if (pollTimer.value) clearInterval(pollTimer.value);
+
+            // 每秒请求一次进度
+            pollTimer.value = setInterval(async () => {
+              try {
+                const res = await axios.get(`/api/tasks/${taskId}`);
+                currentTask.value = res.data;
+
+                // if (res.data.status === "completed") {
+                // 提取路径并初始化输出音频列表（简化结构）
+                speakerDirs.value = extractMergedAudios(res.data.output);
+                finalFolder.value = extractFinalFolder(res.data.output);
+                // 2. 新增：提取角色数量
+                vocalCount.value = extractVocalCount(res.data.output);
+                // 任务完成/失败时，停止轮询
+                if (["completed", "failed"].includes(res.data.status)) {
+                  isTaskRunning.value = false;
+                  clearInterval(pollTimer.value);
+                  pollTimer.value = null;
+                }
+              } catch (err) {
+                clearInterval(pollTimer.value);
+                pollTimer.value = null;
+                alert(
+                  `获取进度失败：${err.response?.data?.detail || err.message}`
+                );
+              }
+            }, 2000); // 轮询间隔：1000ms（1秒），可根据需求调整
+          };
+
+          const startTask = async () => {
+            // 1. 前置校验
+            if (!selectedFile.value) {
+              alert("请先正确的输入音（视）频文件");
+              return;
+            }
+            if (durationError.value) {
+              alert("文件时长超过60s，无法启动任务");
+              return;
+            }
+            // 重置之前的任务
+            resetTask();
+
+            try {
+              // 2. 调用后端上传接口（使用你提供的FormData逻辑）
+              const formData = new FormData();
+              formData.append(
+                "file",
+                selectedFile.value,
+                selectedFile.value.name
+              );
+
+              const response = await axios.post("/api/upload-audio", formData, {
+                headers: { "Content-Type": "multipart/form-data" },
+              });
+
+              // 处理响应
+              const { success, message, save_path } = response.data;
+              if (!success) {
+                errorMessage.value = "上传失败：" + message;
+                return;
+              }
+
+              // 3. 保存后端返回的上传后路径（假设接口返回{file_path: "xxx"}）
+              uploadedFilePath.value = save_path.replace(/\\/g, "/");
+              if (!uploadedFilePath.value) {
+                alert("上传失败，未获取到文件路径");
+                return;
+              }
+
+              // 构造后端参数（替换原有人声差异系数，新增说话人参数）
+              const scriptArgs = [
+                `--input-path=${uploadedFilePath.value.replace(
+                  /[\u200e\u200f\u202a\u202b\u202c]/g,
+                  ""
+                )}`,
+                `--translate=${translate.value}`,
+                `--extract-speech=${
+                  extractSpeech.value || extractSpeechTimeline.value
+                }`,
+                `--preserve-timeline=${extractSpeechTimeline.value}`,
+              ];
+
+              // 新增：添加说话人参数（优先固定数量，再范围）
+              if (!isNaN(speakerCount.value)) {
+                scriptArgs.push(`--num-speakers=${speakerCount.value}`);
+              } else {
+                scriptArgs.push(`--min-speakers=${speakerMin.value}`);
+                scriptArgs.push(`--max-speakers=${speakerMax.value}`);
+              }
+              // 调用后端启动任务接口
+              const res = await axios.post("/api/tasks", {
+                script_name: "pyannote_audio_batch_handler.py",
+                script_args: scriptArgs,
+              });
+
+              // 保存当前任务信息
+              currentTask.value = res.data;
+              isTaskRunning.value = true;
+
+              // 启动轮询（每秒1次，可调整间隔）
+              startPolling(res.data.task_id);
+            } catch (err) {
+              alert(
+                `启动任务失败：${err.response?.data?.detail || err.message}`
+              );
+            }
+          };
+
+          // -------------------------- 工具函数 --------------------------
+          // 格式化任务状态（中文显示）
+          const formatStatus = (status) => {
+            const map = {
+              running: "运行中",
+              completed: "已完成",
+              failed: "已失败",
+            };
+            return map[status] || status;
+          };
+
+          // 根据进度获取进度条颜色
+          const getProgressBarClass = () => {
+            const progress = currentTask.value?.progress || 0;
+            // if (progress < 30) return "bg-purple-200";
+            // if (progress < 70) return "bg-purple-300";
+            return "bg-purple-500";
+          };
+
+          const go = () => {
+            //alert("g");
+            window.location.href = "/static/tool_merge.html";
+          };
+
+          // 新增2：从后台output日志中提取角色数量（匹配count：xxx格式）
+          const extractVocalCount = (output) => {
+            if (!output || typeof output !== "string") return null;
+            // 正则匹配"count：数字"格式（兼容空格、大小写，如count:3、Count： 5）
+            const countMatch = output.match(/count_role\s*：\s*(\d+)/i);
+            return countMatch ? countMatch[1] : null;
+          };
+
+          // 新增3：从后台output日志中提取合并音频
+          const extractMergedAudios = (output) => {
+            const MARK = "result_merge_speaker：";
+            if (!output || typeof output !== "string") return null;
+            // 2. 按换行符分割（兼容 \r\n 和 \n）
+            const outputLines = output.split(/\r?\n/);
+
+            // 3. 筛选所有“合并完成：”开头的行（去空格后匹配，避免行首空格影响）
+            const rawTargetLines = outputLines
+              .map((line) => line.trim()) // 先去每行首尾空格
+              .filter((trimmedLine) => trimmedLine.startsWith(MARK));
+
+            // 5. 逐个提取路径，并过滤无效路径
+            const validPaths = [];
+            rawTargetLines.forEach((line, index) => {
+              try {
+                // 分割“合并完成：”，取后面的内容作为路径
+                const pathPart = line.split(MARK)[1];
+                if (!pathPart) return; // 若分割后无路径，跳过
+
+                // 去空格后校验是否为空（排除“合并完成：  ”这种无效行）
+                const trimmedPath = pathPart.trim();
+                if (trimmedPath === "") return;
+
+                // 统一路径格式：Windows 反斜杠 \ 转为 /（方便前端展示和 URL 拼接）
+                const formattedPath = trimmedPath.replace(/\\/g, "/");
+                validPaths.push(formattedPath);
+              } catch (error) {
+                // 单个行处理失败不影响整体，仅打印调试日志
+                console.warn(
+                  `处理第 ${index + 1} 个合并路径时出错：`,
+                  error,
+                  "原始行：",
+                  line
+                );
+              }
+            });
+
+            return validPaths;
+          };
+
+          const extractFinalFolder = (output) => {
+            if (!output || typeof output !== "string") return null;
+            // 正则匹配"result_root"格式
+            const countMatch = output.match(/result_root\s*：\s*(.*)/i);
+            return countMatch ? countMatch[1] : null;
+          };
+          // 新增4：点击打开文件夹（发送HTTP请求到后台）
+          // 点击打开文件夹（发送HTTP请求到后台）
+          const openTargetFolder = async (folder_path) => {
+            try {
+              console.log("发送的文件夹路径：", folder_path); // 控制台确认路径是否正确
+              const res = await axios.post(
+                "/api/open-folder",
+                { folder_path }, // 必须和后端模型的字段名一致
+                { headers: { "Content-Type": "application/json" } }
+              );
+              console.log("接口响应：", res.data);
+            } catch (err) {
+              console.error("错误详情：", err.response.data); // 打印422/500的具体错误
+            }
+          };
+
+          return {
+            currentTask,
+            formatStatus,
+            getProgressBarClass,
+            activeTab,
+            errorMessage,
+            go,
+            startTask,
+            uploadedFile,
+            vocalCount,
+            finalFolder,
+            openTargetFolder,
+            speakerCount,
+            speakerMin,
+            speakerMax,
+            speakerDirs,
+            isAudio,
+            isVideo,
+            getFileFullPath,
+            getTargetPath,
+            getSpeaker,
+            translate,
+            extractSpeech,
+            extractSpeechTimeline,
+            selectedFile,
+            durationError,
+            uploadedFilePath,
+            handleFileSelect,
+          };
+        },
+      }).mount("#app");
+    </script>
+  </body>
+</html>
