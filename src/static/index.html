@@ -45,31 +45,53 @@
     <!-- Vue 应用挂载容器 -->
     <div id="app" class="max-w-6xl mx-auto">
       <!-- 顶部标签栏 -->
-      <div class="flex gap-5 border-b-2 border-primary mb-5">
+      <div class="flex gap-5 border-b-2 border-primary mb-5 items-center">
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goMp4ToWav()"
+        >
+          MP4转WAV
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task3' }"
+          @click="activeTab = 'task3'"
+        >
+          ClearVoice语音增强
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goOcrSrt()"
+        >
+          OCR字幕说话人分配
+        </div>
         <div
           class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
           :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task1' }"
+          @click="activeTab = 'task1'"
         >
-          长音频或批量（无多人声重叠）
+          长音频批量
         </div>
         <div
           class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
           :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task2' }"
           @click="go()"
         >
-          工具-音(视)频合并
+          音视频合并
         </div>
-        <!-- 新增：帮助按钮（靠右显示，使用flex-grow推到右侧） -->
-        <div class="flex-grow flex justify-end">
-          <a
-            href="https://www.yuque.com/choui/cah18i/tv4wgxsx3kua7ufb?singleDoc# 《软件安装》"
-            target="_blank"
-            class="flex items-center gap-1 px-3 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-            title="查看帮助文档"
-          >
-            <i class="fa fa-question-circle"></i>
-            <span class="text-sm">帮助</span>
-          </a>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          :class="{ 'text-primary border-b-2 border-primary': activeTab === 'tts-dubbing' }"
+          @click="activeTab = 'tts-dubbing'"
+        >
+          <i class="fas fa-microphone mr-1"></i>TTS配音
+        </div>
+        <div class="flex-1"></div>
+        <div
+          class="px-3 py-1 cursor-pointer bg-primary hover:bg-purple-600 text-white rounded transition-colors"
+          @click="showTtsModal = true"
+        >
+          <i class="fas fa-cog mr-1"></i>TTS模型管理
         </div>
       </div>
 
@@ -357,6 +379,1216 @@
           </div>
         </div>
       </div>
+
+      <!-- ClearVoice 语音增强任务内容 -->
+      <div v-if="activeTab === 'task3'">
+        <h2 class="text-center text-primary mb-3 text-2xl font-semibold">
+          ClearVoice 语音增强 - 去除噪声，提升音质
+        </h2>
+
+        <!-- 音频处理区域 -->
+        <div class="flex flex-col gap-5 mb-5">
+          <!-- 输入配置区域 -->
+          <div class="bg-darker p-3 rounded-md flex-1">
+            <!-- 文件路径输入 -->
+            <div class="mb-4 p-3 border-b border-gray-700">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-gray-300 font-medium">输入音频文件：</span>
+                <label class="cursor-pointer px-3 py-1 bg-primary/20 hover:bg-primary/30 rounded text-sm transition-colors">
+                  <i class="fa fa-upload mr-1"></i>
+                  上传音频
+                  <input
+                    type="file"
+                    accept=".wav,.mp3,.flac,.m4a,.aac,.ogg,.wma"
+                    @change="handleEnhanceAudioUpload"
+                    class="hidden"
+                  />
+                </label>
+              </div>
+              <input
+                v-model="enhanceInputFile"
+                type="text"
+                placeholder="推荐：直接输入本地文件路径，如 D:\audio\noisy_audio.wav"
+                class="bg-transparent outline-none text-sm w-full placeholder-gray-500 focus:border-purple-400 transition-all duration-200 border-b border-gray-600 pb-1"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                <i class="fa fa-info-circle text-primary mr-1"></i>
+                支持格式：WAV, MP3, FLAC, M4A, AAC, OGG, WMA
+              </p>
+              <div v-if="enhanceAudioUploading" class="text-xs text-primary mt-2">
+                <i class="fa fa-spinner fa-spin mr-1"></i>
+                上传中...
+              </div>
+            </div>
+
+            <!-- 输出路径配置 -->
+            <div class="flex items-center p-3">
+              <span class="mr-2 text-gray-300 min-w-[120px]">输出目录：</span>
+              <input
+                v-model="enhanceOutputPath"
+                type="text"
+                placeholder="默认：output"
+                class="bg-darker border border-gray-600 rounded px-2 py-1 text-sm flex-1 max-w-[300px] focus:border-primary outline-none transition-colors"
+              />
+              <p class="text-sm text-gray-400 ml-3 flex items-center">
+                <i class="fa fa-info-circle text-primary mr-1.5"></i>
+                留空使用默认输出目录
+              </p>
+            </div>
+
+            <!-- 功能说明 -->
+            <div class="bg-darker/50 border border-gray-700 rounded p-3 mb-3">
+              <h4 class="text-sm font-medium text-primary mb-2 flex items-center">
+                <i class="fa fa-lightbulb-o mr-2"></i>
+                功能说明
+              </h4>
+              <ul class="text-xs text-gray-400 space-y-1 ml-5 list-disc">
+                <li>使用阿里达摩院 MossFormer2_SE_48K 模型</li>
+                <li>有效去除背景噪声，提升人声清晰度</li>
+                <li>支持 WAV、MP3、FLAC、M4A 等常见音频格式</li>
+                <li>首次运行会自动下载模型（约100MB）</li>
+                <li>处理时间取决于音频长度和硬件性能</li>
+              </ul>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div
+              v-if="!enhanceTask || enhanceTask.status !== 'running'"
+              class="flex gap-2 mt-2"
+            >
+              <button
+                @click="startEnhanceTask"
+                class="w-full px-4 py-2 bg-primary text-white hover:bg-purple-500 rounded-md transition-colors"
+              >
+                开始增强
+              </button>
+            </div>
+
+            <!-- 进度展示区域 -->
+            <div
+              v-if="enhanceTask"
+              class="p-4 rounded-lg shadow-sm border border-gray-200 space-y-4 mt-2"
+            >
+              <div class="flex justify-between items-center">
+                <span class="font-medium">任务ID：{{ enhanceTask.task_id }}</span>
+                <span class="text-sm text-gray-500">
+                  状态：{{ formatStatus(enhanceTask.status) }}
+                </span>
+              </div>
+
+              <!-- 进度条 -->
+              <div class="space-y-2">
+                <div class="flex justify-between text-sm">
+                  <span>进度</span>
+                  <span>{{ enhanceTask.progress }}%</span>
+                </div>
+                <div class="w-full h-4 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-all duration-300 bg-purple-500"
+                    :style="{ width: enhanceTask.progress + '%' }"
+                  ></div>
+                </div>
+              </div>
+
+              <!-- 时间信息 -->
+              <div class="text-sm text-gray-500">
+                <p>启动时间：{{ enhanceTask.start_time }}</p>
+                <p v-if="enhanceTask.end_time">
+                  结束时间：{{ enhanceTask.end_time }}
+                </p>
+              </div>
+
+              <!-- 错误提示 -->
+              <div
+                v-if="enhanceTask.error"
+                class="text-red-500 text-sm bg-red-50 p-2 rounded"
+              >
+                错误信息：{{ enhanceTask.error }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 输出结果区域 -->
+          <div class="flex-1 flex flex-col gap-4 mt-6">
+            <h3 class="text-lg font-medium text-primary">增强结果</h3>
+
+            <!-- 输出文件夹显示 -->
+            <div
+              v-if="enhanceResultFolder"
+              class="flex items-center gap-2 text-sm mt-1"
+            >
+              <span class="text-gray-400">输出文件夹：</span>
+              <a
+                @click="openTargetFolder(enhanceResultFolder)"
+                class="text-primary hover:text-purple-400 cursor-pointer flex items-center gap-1"
+              >
+                {{ enhanceResultFolder }}
+                <i class="fa fa-folder-open-o"></i>
+              </a>
+            </div>
+
+            <!-- 增强后的音频播放 -->
+            <div v-if="enhanceResultFile" class="mt-4">
+              <div class="bg-darker rounded-md p-4">
+                <div class="flex justify-between items-center mb-3">
+                  <h4 class="font-medium text-gray-100">增强后的音频</h4>
+                </div>
+                <div class="bg-darker/80 border-0 border-gray-700 rounded p-2">
+                  <audio
+                    :src="getEnhanceFileUrl(enhanceResultFile)"
+                    controls
+                    controlsList="nodownload"
+                    class="w-full h-10"
+                    preload="metadata"
+                  >
+                    您的浏览器不支持音频播放
+                  </audio>
+                  <p class="text-xs text-gray-400 mt-2">
+                    文件路径：{{ enhanceResultFile }}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 无结果提示 -->
+            <div
+              v-else-if="enhanceTask?.status === 'completed'"
+              class="text-sm text-gray-400 mt-4"
+            >
+              处理完成，请在输出文件夹中查看结果
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TTS配音模块 -->
+      <div v-if="activeTab === 'tts-dubbing'">
+        <h2 class="text-center text-primary mb-5 text-2xl font-semibold">
+          <i class="fas fa-microphone mr-2"></i>TTS 智能配音
+        </h2>
+
+        <!-- 子标签切换 -->
+        <div class="flex gap-3 mb-5 border-b border-gray-700">
+          <button
+            @click="ttsDubbingMode = 'single'"
+            :class="ttsDubbingMode === 'single' ? 'text-primary border-b-2 border-primary' : 'text-gray-400'"
+            class="px-4 py-2 transition-colors hover:text-primary"
+          >
+            <i class="fas fa-user mr-1"></i>单角色配音
+          </button>
+          <button
+            @click="ttsDubbingMode = 'multi'"
+            :class="ttsDubbingMode === 'multi' ? 'text-primary border-b-2 border-primary' : 'text-gray-400'"
+            class="px-4 py-2 transition-colors hover:text-primary"
+          >
+            <i class="fas fa-users mr-1"></i>多角色配音
+          </button>
+        </div>
+
+        <!-- 单角色配音界面 -->
+        <div v-if="ttsDubbingMode === 'single'" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <!-- 左侧：配置区域 -->
+          <div class="bg-darker p-5 rounded-lg">
+            <h3 class="text-xl font-semibold mb-4 text-white border-b border-gray-700 pb-2">
+              <i class="fas fa-cog mr-2 text-primary"></i>配音配置
+            </h3>
+
+            <!-- SRT文件上传 -->
+            <div class="mb-4">
+              <label class="block text-sm font-medium mb-2">
+                <i class="fas fa-file-alt mr-1"></i>SRT字幕文件
+              </label>
+              <input
+                type="file"
+                accept=".srt"
+                @change="handleSrtUpload"
+                class="w-full bg-dark text-white px-4 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-primary file:text-white file:cursor-pointer hover:file:bg-purple-600"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                <i class="fas fa-info-circle mr-1"></i>
+                上传包含时间轴的SRT字幕文件
+              </p>
+            </div>
+
+            <!-- SRT预览 -->
+            <div v-if="ttsDubbing.srtFile" class="mb-4 bg-dark p-3 rounded border border-gray-700">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm text-gray-400">
+                  <i class="fas fa-check-circle text-green-400 mr-1"></i>
+                  已上传: {{ ttsDubbing.srtFile.name }}
+                </span>
+                <span class="text-xs text-gray-500">
+                  {{ ttsDubbing.subtitles.length }} 条字幕
+                </span>
+              </div>
+              <div class="max-h-32 overflow-y-auto text-xs text-gray-400 space-y-1">
+                <div v-for="(sub, idx) in ttsDubbing.subtitles.slice(0, 5)" :key="idx" class="border-l-2 border-primary pl-2">
+                  <span class="text-gray-500">{{ sub.start }} → {{ sub.end }}</span>
+                  <p class="text-white">{{ sub.text }}</p>
+                </div>
+                <p v-if="ttsDubbing.subtitles.length > 5" class="text-gray-600 text-center">
+                  ... 还有 {{ ttsDubbing.subtitles.length - 5 }} 条
+                </p>
+              </div>
+            </div>
+
+            <!-- TTS引擎选择 -->
+            <div class="mb-4">
+              <label class="block text-sm font-medium mb-2">
+                <i class="fas fa-robot mr-1"></i>TTS引擎
+              </label>
+              <select
+                v-model="ttsDubbing.engine"
+                class="w-full bg-dark text-white px-4 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+              >
+                <option value="">请选择引擎</option>
+                <option value="gpt-sovits" v-if="ttsConfig.gptSovits.enabled">GPT-SoVITS</option>
+                <option value="qwen-tts" v-if="ttsConfig.qwenTts.enabled">QwenTTS</option>
+              </select>
+            </div>
+
+            <!-- 角色选择 -->
+            <div class="mb-4" v-if="ttsDubbing.engine">
+              <label class="block text-sm font-medium mb-2">
+                <i class="fas fa-user mr-1"></i>配音角色
+              </label>
+              <select
+                v-model="ttsDubbing.selectedRole"
+                class="w-full bg-dark text-white px-4 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+              >
+                <option value="">请选择角色</option>
+                <option 
+                  v-for="(role, idx) in getAvailableRoles()" 
+                  :key="idx" 
+                  :value="role"
+                >
+                  {{ role.name }}
+                </option>
+              </select>
+            </div>
+
+            <!-- 高级选项 -->
+            <div class="mb-4 bg-dark p-3 rounded border border-gray-700">
+              <div class="flex items-center justify-between mb-3">
+                <label class="text-sm font-medium">
+                  <i class="fas fa-sliders-h mr-1"></i>高级选项
+                </label>
+              </div>
+              
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-xs text-gray-400 mb-1">合成语言</label>
+                  <select
+                    v-model="ttsDubbing.textLang"
+                    class="w-full bg-darker text-white px-3 py-2 rounded text-sm border border-gray-600 focus:border-primary focus:outline-none"
+                  >
+                    <option value="zh">中文</option>
+                    <option value="en">英文</option>
+                    <option value="ja">日文</option>
+                    <option value="ko">韩文</option>
+                  </select>
+                  <p class="text-xs text-gray-500 mt-1">
+                    <i class="fas fa-info-circle mr-1"></i>选择要合成的语言
+                  </p>
+                </div>
+
+                <div>
+                  <label class="block text-xs text-gray-400 mb-1">
+                    <i class="fas fa-microphone mr-1"></i>
+                    TTS生成语速
+                  </label>
+                  <input
+                    v-model.number="ttsDubbing.speedFactor"
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.1"
+                    class="w-full"
+                  />
+                  <div class="flex justify-between text-xs text-gray-500">
+                    <span>0.5x</span>
+                    <span class="text-primary">{{ ttsDubbing.speedFactor }}x</span>
+                    <span>2.0x</span>
+                  </div>
+                  <p class="text-xs text-gray-600 mt-1">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    控制TTS引擎生成配音时的语速（生成阶段）
+                  </p>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-gray-400">静音间隔 (秒)</label>
+                  <input
+                    v-model.number="ttsDubbing.silenceDuration"
+                    type="number"
+                    min="0"
+                    max="5"
+                    step="0.1"
+                    class="w-20 bg-darker text-white px-2 py-1 rounded text-xs border border-gray-600 focus:border-primary focus:outline-none"
+                  />
+                </div>
+
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    v-model="ttsDubbing.autoAlign"
+                    class="mr-2"
+                  />
+                  <label class="text-xs text-gray-400">自动对齐时间轴</label>
+                </div>
+              </div>
+            </div>
+
+            <!-- 保持总时长选项（独立功能） -->
+            <div class="mb-4 bg-dark p-3 rounded border border-blue-700">
+              <label class="flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  v-model="ttsDubbing.preserveTotalTime"
+                  class="mr-2"
+                >
+                <span class="text-sm text-gray-300">
+                  <i class="fas fa-clock mr-1 text-blue-400"></i>
+                  保持SRT总时长不变（推荐）
+                </span>
+              </label>
+              <p class="text-xs text-gray-500 ml-6 mt-1">
+                <i class="fas fa-compress-arrows-alt mr-1"></i>
+                动态调整字幕时间轴，确保最终音频时长 = 原始SRT总时长
+              </p>
+              <p class="text-xs text-blue-400 ml-6 mt-1">
+                <i class="fas fa-lightbulb mr-1"></i>
+                示例：原始SRT 1:55，配音 2:32 → 自动加速到 1:55
+              </p>
+              
+              <!-- 最大加速倍率 -->
+              <div v-if="ttsDubbing.preserveTotalTime" class="mt-3 pt-3 border-t border-gray-700">
+                <label class="block text-xs text-gray-400 mb-2">
+                  <i class="fas fa-tachometer-alt mr-1"></i>
+                  最大加速倍率: <span class="text-white font-semibold">{{ ttsDubbing.maxAudioSpeedRate.toFixed(1) }}x</span>
+                </label>
+                <input 
+                  type="range" 
+                  v-model.number="ttsDubbing.maxAudioSpeedRate"
+                  min="1.0" 
+                  max="2.5" 
+                  step="0.1"
+                  class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                >
+                <div class="flex justify-between text-xs text-gray-600 mt-1">
+                  <span>1.0x</span>
+                  <span class="text-gray-500">建议: 1.5x-2.0x</span>
+                  <span>2.5x</span>
+                </div>
+                <p class="text-xs text-gray-600 mt-2">
+                  <i class="fas fa-info-circle mr-1"></i>
+                  倍率越高，音频压缩越多，但可能影响音质
+                </p>
+              </div>
+            </div>
+
+            <!-- 智能双重变速机制（高级功能） -->
+            <div class="mb-4">
+              <label class="flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  v-model="ttsDubbing.enableSmartSpeedup"
+                  class="mr-2"
+                >
+                <span class="text-sm text-gray-300">
+                  <i class="fas fa-magic mr-1 text-primary"></i>
+                  启用智能音频加速（高级）
+                </span>
+              </label>
+              <p class="text-xs text-gray-500 ml-6 mt-1">
+                <i class="fas fa-bolt mr-1 text-yellow-400"></i>
+                在配音生成后，自动加速音频以匹配字幕时长（后处理阶段）
+              </p>
+              <p class="text-xs text-yellow-600 ml-6 mt-1">
+                <i class="fas fa-exclamation-triangle mr-1"></i>
+                注意：此功能与上方"TTS生成语速"独立，两者会叠加效果
+              </p>
+            </div>
+
+            <!-- 智能加速高级选项 -->
+            <div v-if="ttsDubbing.enableSmartSpeedup" class="mb-4 bg-dark p-3 rounded border border-gray-700">
+              <p class="text-xs text-gray-400 mb-2">
+                <i class="fas fa-cog mr-1"></i>
+                高级选项（通常不需要调整）
+              </p>
+              <p class="text-xs text-gray-500 mt-2">
+                <i class="fas fa-info-circle mr-1"></i>
+                此功能用于不保持总时长的场景，如果已启用"保持SRT总时长不变"，则无需启用此功能
+              </p>
+            </div>
+
+            <!-- 开始配音按钮 -->
+            <button
+              @click="startTtsDubbing"
+              :disabled="!canStartDubbing()"
+              class="w-full bg-primary hover:bg-purple-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 rounded transition"
+            >
+              <i class="fas fa-play mr-2"></i>
+              {{ ttsDubbing.task?.status === 'running' ? '配音中...' : '开始配音' }}
+            </button>
+          </div>
+
+          <!-- 右侧：进度和结果 -->
+          <div class="bg-darker p-5 rounded-lg">
+            <h3 class="text-xl font-semibold mb-4 text-white border-b border-gray-700 pb-2">
+              <i class="fas fa-tasks mr-2 text-primary"></i>配音进度
+            </h3>
+
+            <!-- 任务进度 -->
+            <div v-if="ttsDubbing.task" class="mb-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm text-gray-400">状态</span>
+                <span 
+                  class="text-sm font-semibold"
+                  :class="{
+                    'text-yellow-400': ttsDubbing.task.status === 'running',
+                    'text-green-400': ttsDubbing.task.status === 'completed',
+                    'text-red-400': ttsDubbing.task.status === 'failed'
+                  }"
+                >
+                  {{ formatDubbingStatus(ttsDubbing.task.status) }}
+                </span>
+              </div>
+
+              <!-- 进度条 -->
+              <div class="w-full bg-gray-700 rounded-full h-2 mb-2">
+                <div
+                  class="bg-primary h-2 rounded-full transition-all duration-300"
+                  :style="{ width: ttsDubbing.task.progress + '%' }"
+                ></div>
+              </div>
+              <div class="text-xs text-gray-500 text-right">
+                {{ ttsDubbing.task.progress }}%
+              </div>
+
+              <!-- 当前处理信息 -->
+              <div v-if="ttsDubbing.task.currentSubtitle" class="mt-3 bg-dark p-3 rounded border border-gray-700">
+                <p class="text-xs text-gray-400 mb-1">
+                  正在处理: {{ ttsDubbing.task.currentSubtitle.index + 1 }} / {{ ttsDubbing.subtitles.length }}
+                </p>
+                <p class="text-sm text-white">{{ ttsDubbing.task.currentSubtitle.text }}</p>
+              </div>
+
+              <!-- 错误信息 -->
+              <div v-if="ttsDubbing.task.status === 'failed'" class="mt-3 bg-red-900 bg-opacity-20 border border-red-500 p-3 rounded">
+                <p class="text-sm text-red-400">
+                  <i class="fas fa-exclamation-triangle mr-1"></i>
+                  {{ ttsDubbing.task.error }}
+                </p>
+              </div>
+            </div>
+
+            <!-- 配音结果 -->
+            <div v-if="ttsDubbing.task?.status === 'completed' && ttsDubbing.resultAudio" class="mt-4">
+              <h4 class="text-lg font-semibold mb-3 text-green-400">
+                <i class="fas fa-check-circle mr-2"></i>配音完成
+              </h4>
+
+              <!-- 音频播放器 -->
+              <div class="bg-dark p-4 rounded border border-gray-700">
+                <audio
+                  :src="ttsDubbing.resultAudio"
+                  controls
+                  controlsList="nodownload"
+                  class="w-full mb-3"
+                >
+                  您的浏览器不支持音频播放
+                </audio>
+
+                <!-- 下载按钮 -->
+                <div class="flex gap-2">
+                  <a
+                    :href="ttsDubbing.resultAudio"
+                    download="tts_dubbing.wav"
+                    class="flex-1 bg-green-600 hover:bg-green-700 text-white text-center py-2 rounded transition"
+                  >
+                    <i class="fas fa-download mr-1"></i>下载音频
+                  </a>
+                  <a
+                    v-if="ttsDubbing.srtUrl"
+                    :href="ttsDubbing.srtUrl"
+                    download="updated_subtitles.srt"
+                    class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-center py-2 rounded transition"
+                  >
+                    <i class="fas fa-file-alt mr-1"></i>下载字幕
+                  </a>
+                  <button
+                    @click="openDubbingFolder"
+                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded transition"
+                  >
+                    <i class="fas fa-folder-open mr-1"></i>打开文件夹
+                  </button>
+                </div>
+
+                <p class="text-xs text-gray-500 mt-2">
+                  <i class="fas fa-music mr-1"></i>音频: {{ ttsDubbing.resultPath }}
+                </p>
+                <p v-if="ttsDubbing.srtPath" class="text-xs text-gray-500 mt-1">
+                  <i class="fas fa-file-alt mr-1"></i>字幕: {{ ttsDubbing.srtPath }}
+                </p>
+              </div>
+            </div>
+
+            <!-- 空状态 -->
+            <div v-if="!ttsDubbing.task" class="text-center py-12 text-gray-500">
+              <i class="fas fa-info-circle text-4xl mb-3"></i>
+              <p>配置完成后点击"开始配音"</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 多角色配音界面 -->
+        <div v-if="ttsDubbingMode === 'multi'" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <!-- 左侧：配置区域 -->
+          <div class="bg-darker p-5 rounded-lg">
+            <h3 class="text-xl font-semibold mb-4 text-white border-b border-gray-700 pb-2">
+              <i class="fas fa-cog mr-2 text-primary"></i>多角色配音配置
+            </h3>
+
+            <!-- 带说话人标识的SRT文件上传 -->
+            <div class="mb-4">
+              <label class="block text-sm font-medium mb-2">
+                <i class="fas fa-file-alt mr-1"></i>带说话人标识的SRT文件
+              </label>
+              <input
+                type="file"
+                accept=".srt"
+                @change="handleMultiRoleSrtUpload"
+                class="w-full bg-dark text-white px-4 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-primary file:text-white file:cursor-pointer hover:file:bg-purple-600"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                <i class="fas fa-info-circle mr-1"></i>
+                上传包含说话人标识的SRT文件（格式：[spk00] 文本内容）
+              </p>
+            </div>
+
+            <!-- SRT预览和说话人检测 -->
+            <div v-if="multiRoleDubbing.srtFile" class="mb-4 bg-dark p-3 rounded border border-gray-700">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm text-gray-400">
+                  <i class="fas fa-check-circle text-green-400 mr-1"></i>
+                  已上传: {{ multiRoleDubbing.srtFile.name }}
+                </span>
+                <span class="text-xs text-gray-500">
+                  {{ multiRoleDubbing.subtitles.length }} 条字幕
+                </span>
+              </div>
+              
+              <!-- 检测到的说话人列表 -->
+              <div v-if="multiRoleDubbing.detectedSpeakers.length > 0" class="mt-3">
+                <p class="text-xs text-gray-400 mb-2">
+                  <i class="fas fa-users mr-1"></i>检测到 {{ multiRoleDubbing.detectedSpeakers.length }} 个说话人:
+                </p>
+                <div class="flex flex-wrap gap-2">
+                  <span 
+                    v-for="speaker in multiRoleDubbing.detectedSpeakers" 
+                    :key="speaker"
+                    class="px-2 py-1 bg-primary bg-opacity-20 text-primary text-xs rounded"
+                  >
+                    {{ speaker }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- TTS引擎选择 -->
+            <div class="mb-4">
+              <label class="block text-sm font-medium mb-2">
+                <i class="fas fa-robot mr-1"></i>TTS引擎
+              </label>
+              <select
+                v-model="multiRoleDubbing.engine"
+                class="w-full bg-dark text-white px-4 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+              >
+                <option value="">请选择引擎</option>
+                <option value="gpt-sovits" v-if="ttsConfig.gptSovits.enabled">GPT-SoVITS</option>
+                <option value="qwen-tts" v-if="ttsConfig.qwenTts.enabled">QwenTTS</option>
+              </select>
+            </div>
+
+            <!-- 角色映射配置 -->
+            <div v-if="multiRoleDubbing.detectedSpeakers.length > 0" class="mb-4">
+              <label class="block text-sm font-medium mb-2">
+                <i class="fas fa-link mr-1"></i>角色映射配置
+                <span class="text-xs text-gray-500 ml-2">(为每个说话人分配TTS角色)</span>
+              </label>
+              
+              <!-- 未选择引擎时的提示 -->
+              <div v-if="!multiRoleDubbing.engine" class="bg-yellow-900 bg-opacity-20 border border-yellow-500 p-3 rounded mb-3">
+                <p class="text-sm text-yellow-400">
+                  <i class="fas fa-exclamation-triangle mr-1"></i>
+                  请先选择TTS引擎
+                </p>
+              </div>
+              
+              <!-- 角色映射列表 -->
+              <div v-else class="space-y-3 max-h-64 overflow-y-auto">
+                <div 
+                  v-for="speaker in multiRoleDubbing.detectedSpeakers" 
+                  :key="speaker"
+                  class="bg-dark p-3 rounded border border-gray-700"
+                >
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm font-medium text-primary">
+                      <i class="fas fa-user mr-1"></i>{{ speaker }}
+                    </span>
+                    <span class="text-xs text-gray-500">
+                      {{ getSpeakerSubtitleCount(speaker) }} 条字幕
+                    </span>
+                  </div>
+                  <select
+                    v-model="multiRoleDubbing.rolesMapping[speaker]"
+                    class="w-full bg-darker text-white px-3 py-2 rounded text-sm border border-gray-600 focus:border-primary focus:outline-none"
+                  >
+                    <option :value="null">请选择配音角色</option>
+                    <option 
+                      v-for="(role, idx) in getAvailableRoles()" 
+                      :key="idx" 
+                      :value="role"
+                    >
+                      {{ role.name }}
+                    </option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- 高级选项 -->
+            <div class="mb-4 bg-dark p-3 rounded border border-gray-700">
+              <div class="flex items-center justify-between mb-3">
+                <label class="text-sm font-medium">
+                  <i class="fas fa-sliders-h mr-1"></i>高级选项
+                </label>
+              </div>
+              
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-xs text-gray-400 mb-1">合成语言</label>
+                  <select
+                    v-model="multiRoleDubbing.textLang"
+                    class="w-full bg-darker text-white px-3 py-2 rounded text-sm border border-gray-600 focus:border-primary focus:outline-none"
+                  >
+                    <option value="zh">中文</option>
+                    <option value="en">英文</option>
+                    <option value="ja">日文</option>
+                    <option value="ko">韩文</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block text-xs text-gray-400 mb-1">
+                    <i class="fas fa-microphone mr-1"></i>
+                    TTS生成语速
+                  </label>
+                  <input
+                    v-model.number="multiRoleDubbing.speedFactor"
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.1"
+                    class="w-full"
+                  />
+                  <div class="flex justify-between text-xs text-gray-500">
+                    <span>0.5x</span>
+                    <span class="text-primary">{{ multiRoleDubbing.speedFactor }}x</span>
+                    <span>2.0x</span>
+                  </div>
+                  <p class="text-xs text-gray-600 mt-1">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    控制TTS引擎生成配音时的语速（生成阶段）
+                  </p>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <label class="text-xs text-gray-400">静音间隔 (秒)</label>
+                  <input
+                    v-model.number="multiRoleDubbing.silenceDuration"
+                    type="number"
+                    min="0"
+                    max="5"
+                    step="0.1"
+                    class="w-20 bg-darker text-white px-2 py-1 rounded text-xs border border-gray-600 focus:border-primary focus:outline-none"
+                  />
+                </div>
+
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    v-model="multiRoleDubbing.autoAlign"
+                    class="mr-2"
+                  />
+                  <label class="text-xs text-gray-400">自动对齐时间轴</label>
+                </div>
+
+                <!-- 保持总时长选项（独立功能） -->
+                <div class="mt-3 pt-3 border-t border-gray-700 bg-darker p-3 rounded border border-blue-700">
+                  <label class="flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      v-model="multiRoleDubbing.preserveTotalTime"
+                      class="mr-2"
+                    >
+                    <span class="text-xs text-gray-300">
+                      <i class="fas fa-clock mr-1 text-blue-400"></i>
+                      保持SRT总时长不变（推荐）
+                    </span>
+                  </label>
+                  <p class="text-xs text-gray-500 ml-6 mt-1">
+                    <i class="fas fa-compress-arrows-alt mr-1"></i>
+                    动态调整字幕时间轴，确保最终音频时长 = 原始SRT总时长
+                  </p>
+                  <p class="text-xs text-blue-400 ml-6 mt-1">
+                    <i class="fas fa-lightbulb mr-1"></i>
+                    示例：原始SRT 1:55，配音 2:32 → 自动加速到 1:55
+                  </p>
+                  
+                  <!-- 最大加速倍率 -->
+                  <div v-if="multiRoleDubbing.preserveTotalTime" class="mt-3 pt-3 border-t border-gray-700">
+                    <label class="block text-xs text-gray-400 mb-1">
+                      <i class="fas fa-tachometer-alt mr-1"></i>
+                      最大加速倍率: <span class="text-white">{{ multiRoleDubbing.maxAudioSpeedRate.toFixed(1) }}x</span>
+                    </label>
+                    <input 
+                      type="range" 
+                      v-model.number="multiRoleDubbing.maxAudioSpeedRate"
+                      min="1.0" 
+                      max="2.5" 
+                      step="0.1"
+                      class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    >
+                    <div class="flex justify-between text-xs text-gray-600 mt-1">
+                      <span>1.0x</span>
+                      <span class="text-gray-500">建议: 1.5x-2.0x</span>
+                      <span>2.5x</span>
+                    </div>
+                    <p class="text-xs text-gray-600 mt-2">
+                      <i class="fas fa-info-circle mr-1"></i>
+                      倍率越高，音频压缩越多，但可能影响音质
+                    </p>
+                  </div>
+                </div>
+
+                <!-- 智能双重变速机制（高级功能） -->
+                <div class="mt-3 pt-3 border-t border-gray-700">
+                  <label class="flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      v-model="multiRoleDubbing.enableSmartSpeedup"
+                      class="mr-2"
+                    >
+                    <span class="text-xs text-gray-300">
+                      <i class="fas fa-magic mr-1 text-primary"></i>
+                      启用智能音频加速（高级）
+                    </span>
+                  </label>
+                  <p class="text-xs text-gray-500 ml-6 mt-1">
+                    <i class="fas fa-bolt mr-1 text-yellow-400"></i>
+                    在配音生成后，自动加速音频以匹配字幕时长（后处理阶段）
+                  </p>
+                  <p class="text-xs text-yellow-600 ml-6 mt-1">
+                    <i class="fas fa-exclamation-triangle mr-1"></i>
+                    注意：此功能与上方"TTS生成语速"独立，两者会叠加效果
+                  </p>
+                  <p class="text-xs text-gray-500 ml-6 mt-1">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    此功能用于不保持总时长的场景，如果已启用"保持SRT总时长不变"，则无需启用此功能
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 开始配音按钮 -->
+            <button
+              @click="startMultiRoleDubbing"
+              :disabled="!canStartMultiRoleDubbing()"
+              class="w-full bg-primary hover:bg-purple-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 rounded transition"
+            >
+              <i class="fas fa-play mr-2"></i>
+              {{ multiRoleDubbing.task?.status === 'running' ? '配音中...' : '开始多角色配音' }}
+            </button>
+          </div>
+
+          <!-- 右侧：进度和结果 -->
+          <div class="bg-darker p-5 rounded-lg">
+            <h3 class="text-xl font-semibold mb-4 text-white border-b border-gray-700 pb-2">
+              <i class="fas fa-tasks mr-2 text-primary"></i>配音进度
+            </h3>
+
+            <!-- 任务进度 -->
+            <div v-if="multiRoleDubbing.task" class="mb-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm text-gray-400">状态</span>
+                <span 
+                  class="text-sm font-semibold"
+                  :class="{
+                    'text-yellow-400': multiRoleDubbing.task.status === 'running',
+                    'text-green-400': multiRoleDubbing.task.status === 'completed',
+                    'text-red-400': multiRoleDubbing.task.status === 'failed'
+                  }"
+                >
+                  {{ formatDubbingStatus(multiRoleDubbing.task.status) }}
+                </span>
+              </div>
+
+              <!-- 进度条 -->
+              <div class="w-full bg-gray-700 rounded-full h-2 mb-2">
+                <div
+                  class="bg-primary h-2 rounded-full transition-all duration-300"
+                  :style="{ width: multiRoleDubbing.task.progress + '%' }"
+                ></div>
+              </div>
+              <div class="text-xs text-gray-500 text-right">
+                {{ multiRoleDubbing.task.progress }}%
+              </div>
+
+              <!-- 当前处理信息 -->
+              <div v-if="multiRoleDubbing.task.current_subtitle" class="mt-3 bg-dark p-3 rounded border border-gray-700">
+                <p class="text-xs text-gray-400 mb-1">
+                  正在处理: [{{ multiRoleDubbing.task.current_subtitle.speaker }}]
+                </p>
+                <p class="text-sm text-white">{{ multiRoleDubbing.task.current_subtitle.text }}</p>
+              </div>
+
+              <!-- 错误信息 -->
+              <div v-if="multiRoleDubbing.task.status === 'failed'" class="mt-3 bg-red-900 bg-opacity-20 border border-red-500 p-3 rounded">
+                <p class="text-sm text-red-400">
+                  <i class="fas fa-exclamation-triangle mr-1"></i>
+                  {{ multiRoleDubbing.task.error }}
+                </p>
+              </div>
+            </div>
+
+            <!-- 配音结果 -->
+            <div v-if="multiRoleDubbing.task?.status === 'completed' && multiRoleDubbing.resultAudio" class="mt-4">
+              <h4 class="text-lg font-semibold mb-3 text-green-400">
+                <i class="fas fa-check-circle mr-2"></i>多角色配音完成
+              </h4>
+
+              <!-- 音频播放器 -->
+              <div class="bg-dark p-4 rounded border border-gray-700">
+                <audio
+                  :src="multiRoleDubbing.resultAudio"
+                  controls
+                  controlsList="nodownload"
+                  class="w-full mb-3"
+                >
+                  您的浏览器不支持音频播放
+                </audio>
+
+                <!-- 下载按钮 -->
+                <div class="flex gap-2">
+                  <a
+                    :href="multiRoleDubbing.resultAudio"
+                    download="multi_role_dubbing.wav"
+                    class="flex-1 bg-green-600 hover:bg-green-700 text-white text-center py-2 rounded transition"
+                  >
+                    <i class="fas fa-download mr-1"></i>下载音频
+                  </a>
+                  <a
+                    v-if="multiRoleDubbing.srtUrl"
+                    :href="multiRoleDubbing.srtUrl"
+                    download="updated_subtitles.srt"
+                    class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-center py-2 rounded transition"
+                  >
+                    <i class="fas fa-file-alt mr-1"></i>下载字幕
+                  </a>
+                  <button
+                    @click="openMultiRoleDubbingFolder"
+                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded transition"
+                  >
+                    <i class="fas fa-folder-open mr-1"></i>打开文件夹
+                  </button>
+                </div>
+
+                <p class="text-xs text-gray-500 mt-2">
+                  <i class="fas fa-music mr-1"></i>音频: {{ multiRoleDubbing.resultPath }}
+                </p>
+                <p v-if="multiRoleDubbing.srtPath" class="text-xs text-gray-500 mt-1">
+                  <i class="fas fa-file-alt mr-1"></i>字幕: {{ multiRoleDubbing.srtPath }}
+                </p>
+              </div>
+            </div>
+
+            <!-- 空状态 -->
+            <div v-if="!multiRoleDubbing.task" class="text-center py-12 text-gray-500">
+              <i class="fas fa-info-circle text-4xl mb-3"></i>
+              <p>上传带说话人标识的SRT文件并配置角色后开始配音</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TTS模型管理弹窗 -->
+      <div
+        v-if="showTtsModal"
+        class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50"
+        @click.self="showTtsModal = false"
+      >
+        <div class="bg-darker rounded-lg shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <!-- 弹窗头部 -->
+          <div class="flex items-center justify-between p-6 border-b border-gray-700">
+            <h2 class="text-2xl font-bold text-primary">
+              <i class="fas fa-robot mr-2"></i>TTS模型管理
+            </h2>
+            <button
+              @click="showTtsModal = false"
+              class="text-gray-400 hover:text-white transition"
+            >
+              <i class="fas fa-times text-2xl"></i>
+            </button>
+          </div>
+
+          <!-- 弹窗内容 -->
+          <div class="p-6 space-y-6">
+            
+            <!-- GPT-SoVITS 配置 -->
+            <div class="bg-dark p-5 rounded-lg">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-semibold text-white flex items-center">
+                  <i class="fas fa-microphone mr-2 text-primary"></i>GPT-SoVITS
+                </h3>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    class="sr-only peer"
+                    v-model="ttsConfig.gptSovits.enabled"
+                  />
+                  <div
+                    class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"
+                  ></div>
+                  <span class="ml-3 text-sm text-gray-300">启用</span>
+                </label>
+              </div>
+
+              <div v-if="ttsConfig.gptSovits.enabled" class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium mb-2">API地址</label>
+                  <input
+                    v-model="ttsConfig.gptSovits.apiUrl"
+                    type="text"
+                    placeholder="http://127.0.0.1:9880"
+                    class="w-full bg-darker text-white px-4 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                  />
+                </div>
+
+                <!-- 角色列表 -->
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <label class="block text-sm font-medium">配音角色</label>
+                    <button
+                      @click="addGptSovitsRole"
+                      class="text-sm bg-primary hover:bg-purple-600 text-white px-3 py-1 rounded transition"
+                    >
+                      <i class="fas fa-plus mr-1"></i>添加角色
+                    </button>
+                  </div>
+
+                  <div
+                    v-for="(role, index) in ttsConfig.gptSovits.roles"
+                    :key="index"
+                    class="bg-darker p-4 rounded mb-3 border border-gray-700"
+                  >
+                    <div class="flex items-center justify-between mb-3">
+                      <input
+                        v-model="role.name"
+                        type="text"
+                        placeholder="角色名称"
+                        class="flex-1 bg-dark text-white px-3 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                      />
+                      <button
+                        @click="removeGptSovitsRole(index)"
+                        class="ml-3 text-red-400 hover:text-red-300"
+                      >
+                        <i class="fas fa-trash"></i>
+                      </button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-xs text-gray-400 mb-1">参考音频路径</label>
+                        <input
+                          v-model="role.refAudioPath"
+                          type="text"
+                          placeholder="cs3.mp3 (文件名或完整路径)"
+                          class="w-full bg-dark text-white px-3 py-1.5 rounded text-sm border border-gray-600 focus:border-primary focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-xs text-gray-400 mb-1">参考文本</label>
+                        <input
+                          v-model="role.promptText"
+                          type="text"
+                          placeholder="参考音频的文本内容"
+                          class="w-full bg-dark text-white px-3 py-1.5 rounded text-sm border border-gray-600 focus:border-primary focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-xs text-gray-400 mb-1">参考语言</label>
+                        <select
+                          v-model="role.promptLang"
+                          class="w-full bg-dark text-white px-3 py-1.5 rounded text-sm border border-gray-600 focus:border-primary focus:outline-none"
+                        >
+                          <option value="zh">中文</option>
+                          <option value="en">英文</option>
+                          <option value="ja">日文</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="block text-xs text-gray-400 mb-1">语速</label>
+                        <input
+                          v-model.number="role.speedFactor"
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          max="2"
+                          class="w-full bg-dark text-white px-3 py-1.5 rounded text-sm border border-gray-600 focus:border-primary focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                    
+                    <!-- 测试按钮 -->
+                    <div class="mt-3 flex gap-2">
+                      <button
+                        @click="testGptSovitsRole(role)"
+                        class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-3 rounded transition"
+                        :disabled="!role.refAudioPath || !role.promptText"
+                      >
+                        <i class="fas fa-play mr-1"></i>测试合成
+                      </button>
+                      <button
+                        v-if="role.testAudioUrl"
+                        @click="playTestAudio(role.testAudioUrl)"
+                        class="bg-green-600 hover:bg-green-700 text-white text-sm py-2 px-3 rounded transition"
+                      >
+                        <i class="fas fa-volume-up"></i>
+                      </button>
+                    </div>
+                    
+                    <!-- 测试结果显示 -->
+                    <div v-if="role.testStatus" class="mt-2 text-xs" :class="{
+                      'text-green-400': role.testStatus === 'success',
+                      'text-red-400': role.testStatus === 'error',
+                      'text-yellow-400': role.testStatus === 'testing'
+                    }">
+                      <i class="fas" :class="{
+                        'fa-check-circle': role.testStatus === 'success',
+                        'fa-times-circle': role.testStatus === 'error',
+                        'fa-spinner fa-spin': role.testStatus === 'testing'
+                      }"></i>
+                      {{ role.testMessage }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- QwenTTS 配置 -->
+            <div class="bg-dark p-5 rounded-lg">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-semibold text-white flex items-center">
+                  <i class="fas fa-cloud mr-2 text-primary"></i>QwenTTS (通义千问)
+                </h3>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    class="sr-only peer"
+                    v-model="ttsConfig.qwenTts.enabled"
+                  />
+                  <div
+                    class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"
+                  ></div>
+                  <span class="ml-3 text-sm text-gray-300">启用</span>
+                </label>
+              </div>
+
+              <div v-if="ttsConfig.qwenTts.enabled" class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium mb-2">API密钥</label>
+                  <input
+                    v-model="ttsConfig.qwenTts.apiKey"
+                    type="password"
+                    placeholder="sk-xxxxxxxxxxxxxxxx"
+                    class="w-full bg-darker text-white px-4 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    在阿里云DashScope控制台获取API密钥
+                  </p>
+                </div>
+
+                <!-- 角色列表 -->
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <label class="block text-sm font-medium">配音角色</label>
+                    <button
+                      @click="addQwenTtsRole"
+                      class="text-sm bg-primary hover:bg-purple-600 text-white px-3 py-1 rounded transition"
+                    >
+                      <i class="fas fa-plus mr-1"></i>添加角色
+                    </button>
+                  </div>
+
+                  <div
+                    v-for="(role, index) in ttsConfig.qwenTts.roles"
+                    :key="index"
+                    class="bg-darker p-4 rounded mb-3 border border-gray-700"
+                  >
+                    <div class="flex items-center gap-3">
+                      <input
+                        v-model="role.name"
+                        type="text"
+                        placeholder="角色名称"
+                        class="flex-1 bg-dark text-white px-3 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                      />
+                      <select
+                        v-model="role.voice"
+                        class="flex-1 bg-dark text-white px-3 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                      >
+                        <option value="longxiaochun">龙小春（女声）</option>
+                        <option value="longxiaoxia">龙小夏（女声）</option>
+                        <option value="longxiaoqiu">龙小秋（男声）</option>
+                        <option value="longxiaodong">龙小冬（男声）</option>
+                      </select>
+                      <button
+                        @click="removeQwenTtsRole(index)"
+                        class="text-red-400 hover:text-red-300"
+                      >
+                        <i class="fas fa-trash"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="flex gap-3 pt-4 border-t border-gray-700">
+              <button
+                @click="saveTtsConfig"
+                class="flex-1 bg-primary hover:bg-purple-600 text-white font-semibold py-3 rounded transition"
+              >
+                <i class="fas fa-save mr-2"></i>保存配置
+              </button>
+              <button
+                @click="loadTtsConfig"
+                class="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 rounded transition"
+              >
+                <i class="fas fa-sync-alt mr-2"></i>重新加载
+              </button>
+              <button
+                @click="testTtsConnection"
+                class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded transition"
+              >
+                <i class="fas fa-plug mr-2"></i>测试连接
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -373,7 +1605,10 @@
 
       createApp({
         setup() {
-          const activeTab = ref("task1");
+          // 检查 URL 参数，确定初始显示的标签
+          const urlParams = new URLSearchParams(window.location.search);
+          const tabParam = urlParams.get('tab');
+          const activeTab = ref(tabParam || "task1");
           const errorMessage = ref("");
           const uploadedFile = ref(null);
           const translate = ref(false);
@@ -396,13 +1631,94 @@
           const speakerMin = ref(0); // 数量范围最小值
           const speakerMax = ref(0); // 数量范围最大值
 
+          // ClearVoice 语音增强相关变量
+          const enhanceInputFile = ref(''); // 输入音频文件路径
+          const enhanceOutputPath = ref('output'); // 输出目录
+          const enhanceTask = ref(null); // 当前增强任务
+          const enhancePollTimer = ref(null); // 增强任务轮询定时器
+          const enhanceResultFolder = ref(null); // 结果文件夹路径
+          const enhanceResultFile = ref(null); // 结果文件路径
+          const enhanceAudioUploading = ref(false); // 音频上传状态
+
+          // TTS模型管理相关变量
+          const showTtsModal = ref(false);
+          const ttsConfig = ref({
+            gptSovits: {
+              enabled: false,
+              apiUrl: 'http://127.0.0.1:9880',
+              roles: []
+            },
+            qwenTts: {
+              enabled: false,
+              apiKey: '',
+              roles: []
+            }
+          });
+
+          // TTS配音相关变量
+          const ttsDubbingMode = ref('single'); // 配音模式：single 或 multi
+          const ttsDubbing = ref({
+            srtFile: null,
+            subtitles: [],
+            engine: '',
+            selectedRole: null,
+            textLang: 'zh',  // 新增：合成语言
+            speedFactor: 1.0,
+            silenceDuration: 0.5,
+            autoAlign: true,
+            // 新增：智能双重变速机制
+            enableSmartSpeedup: false,
+            enableAudioSpeedup: true,
+            enableVideoSlowdown: false,
+            maxAudioSpeedRate: 2.0,
+            maxVideoSpeedRate: 10.0,
+            removeSilentGaps: false,
+            preserveTotalTime: true,
+            task: null,
+            resultAudio: null,
+            resultPath: null,
+            srtPath: null,
+            srtUrl: null
+          });
+          const ttsDubbingPollTimer = ref(null);
+
+          // 多角色配音相关变量
+          const multiRoleDubbing = ref({
+            srtFile: null,
+            subtitles: [],
+            detectedSpeakers: [],  // 从SRT中检测到的说话人列表
+            engine: '',
+            rolesMapping: {},  // {spk00: roleConfig, spk01: roleConfig}
+            textLang: 'zh',
+            speedFactor: 1.0,
+            silenceDuration: 0.5,
+            autoAlign: true,
+            // 新增：智能双重变速机制
+            enableSmartSpeedup: false,
+            enableAudioSpeedup: true,
+            enableVideoSlowdown: false,
+            maxAudioSpeedRate: 2.0,
+            maxVideoSpeedRate: 10.0,
+            removeSilentGaps: false,
+            preserveTotalTime: true,
+            task: null,
+            resultAudio: null,
+            resultPath: null,
+            srtPath: null,
+            srtUrl: null
+          });
+          const multiRoleDubbingPollTimer = ref(null);
+
           // 组件挂载时初始化
-          onMounted(() => {});
+          onMounted(() => {
+            loadTtsConfig();
+          });
 
           // 组件卸载时清理
           onUnmounted(() => {
             // 停止轮询
             if (pollTimer.value) clearInterval(pollTimer.value);
+            if (enhancePollTimer.value) clearInterval(enhancePollTimer.value);
           });
 
           // 新增：判断文件是否为音频（匹配常见音频后缀）
@@ -565,6 +1881,14 @@
             window.location.href = "/static/tool_merge.html";
           };
 
+          const goOcrSrt = () => {
+            window.location.href = "/static/ocr_srt_speaker.html";
+          };
+
+          const goMp4ToWav = () => {
+            window.location.href = "/static/mp4_to_wav.html";
+          };
+
           // 新增2：从后台output日志中提取角色数量（匹配count：xxx格式）
           const extractVocalCount = (output) => {
             if (!output || typeof output !== "string") return null;
@@ -636,6 +1960,713 @@
             }
           };
 
+          // ==================== ClearVoice 语音增强功能 ====================
+          
+          // 处理音频文件上传
+          const handleEnhanceAudioUpload = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            enhanceAudioUploading.value = true;
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+              const res = await axios.post('/api/upload-audio', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+              });
+              enhanceInputFile.value = res.data.save_path;
+              alert(`音频上传成功：${res.data.filename}`);
+            } catch (err) {
+              alert(`音频上传失败：${err.response?.data?.detail || err.message}`);
+            } finally {
+              enhanceAudioUploading.value = false;
+              event.target.value = ''; // 清空文件选择器
+            }
+          };
+          
+          // 启动 ClearVoice 增强任务
+          const startEnhanceTask = async () => {
+            if (!enhanceInputFile.value) {
+              alert('请输入音频文件路径');
+              return;
+            }
+
+            // 重置之前的任务
+            enhanceTask.value = null;
+            enhanceResultFolder.value = null;
+            enhanceResultFile.value = null;
+            if (enhancePollTimer.value) {
+              clearInterval(enhancePollTimer.value);
+              enhancePollTimer.value = null;
+            }
+
+            try {
+              // 构造脚本参数
+              const scriptArgs = [
+                `--input-wav=${enhanceInputFile.value.replace(/[\u200e\u200f\u202a\u202b\u202c]/g, '')}`,
+                `--output-path=${enhanceOutputPath.value || 'output'}`
+              ];
+
+              // 调用后端启动任务接口
+              const res = await axios.post('/api/tasks', {
+                script_name: 'clear_voice_enhance.py',
+                script_args: scriptArgs
+              });
+
+              // 保存当前任务信息
+              enhanceTask.value = res.data;
+
+              // 启动轮询
+              startEnhancePolling(res.data.task_id);
+            } catch (err) {
+              alert(`启动增强任务失败：${err.response?.data?.detail || err.message}`);
+            }
+          };
+
+          // 启动增强任务轮询
+          const startEnhancePolling = (taskId) => {
+            if (enhancePollTimer.value) clearInterval(enhancePollTimer.value);
+
+            enhancePollTimer.value = setInterval(async () => {
+              try {
+                const res = await axios.get(`/api/tasks/${taskId}`);
+                enhanceTask.value = res.data;
+
+                // 提取结果路径
+                if (res.data.output) {
+                  const resultMatch = res.data.output.match(/result:\s*(.+)/i);
+                  if (resultMatch) {
+                    enhanceResultFile.value = resultMatch[1].trim();
+                    // 提取文件夹路径
+                    const folderPath = enhanceResultFile.value.substring(0, enhanceResultFile.value.lastIndexOf('/'));
+                    enhanceResultFolder.value = folderPath;
+                  }
+                }
+
+                // 任务完成或失败时停止轮询
+                if (['completed', 'failed'].includes(res.data.status)) {
+                  clearInterval(enhancePollTimer.value);
+                  enhancePollTimer.value = null;
+                }
+              } catch (err) {
+                clearInterval(enhancePollTimer.value);
+                enhancePollTimer.value = null;
+                alert(`获取增强任务进度失败：${err.response?.data?.detail || err.message}`);
+              }
+            }, 2000);
+          };
+
+          // 获取增强文件的 URL
+          const getEnhanceFileUrl = (filePath) => {
+            if (!filePath) return '';
+            // 提取 output 后面的路径
+            const outputIndex = filePath.search(/output[\\/]/i);
+            let relativePath = filePath;
+            if (outputIndex !== -1) {
+              relativePath = filePath.substring(outputIndex);
+            }
+            return `${location.origin}/${relativePath.replace(/\\/g, '/')}?v=${Date.now()}`;
+          };
+
+          // ==================== TTS模型管理功能 ====================
+          
+          // 添加GPT-SoVITS角色
+          const addGptSovitsRole = () => {
+            ttsConfig.value.gptSovits.roles.push({
+              name: '',
+              refAudioPath: '',
+              promptText: '',
+              promptLang: 'zh',
+              speedFactor: 1.0,
+              testStatus: null,
+              testMessage: '',
+              testAudioUrl: null
+            });
+          };
+
+          // 删除GPT-SoVITS角色
+          const removeGptSovitsRole = (index) => {
+            ttsConfig.value.gptSovits.roles.splice(index, 1);
+          };
+
+          // 添加QwenTTS角色
+          const addQwenTtsRole = () => {
+            ttsConfig.value.qwenTts.roles.push({
+              name: '',
+              voice: 'longxiaochun'
+            });
+          };
+
+          // 删除QwenTTS角色
+          const removeQwenTtsRole = (index) => {
+            ttsConfig.value.qwenTts.roles.splice(index, 1);
+          };
+
+          // 保存TTS配置
+          const saveTtsConfig = async () => {
+            try {
+              // 验证配置
+              if (ttsConfig.value.gptSovits.enabled) {
+                if (!ttsConfig.value.gptSovits.apiUrl) {
+                  alert('请填写 GPT-SoVITS API 地址');
+                  return;
+                }
+                if (ttsConfig.value.gptSovits.roles.length === 0) {
+                  if (!confirm('GPT-SoVITS 已启用但未配置角色，确定要保存吗？')) {
+                    return;
+                  }
+                }
+              }
+              
+              if (ttsConfig.value.qwenTts.enabled) {
+                if (!ttsConfig.value.qwenTts.apiKey) {
+                  alert('请填写 QwenTTS API 密钥');
+                  return;
+                }
+              }
+              
+              console.log('💾 保存TTS配置:', ttsConfig.value);
+              
+              const res = await axios.post('/api/tts-config/save', ttsConfig.value);
+              
+              console.log('✅ 保存成功:', res.data);
+              
+              alert(`✅ TTS配置保存成功！\n\n配置文件: tts_config.json\nGPT-SoVITS角色数: ${ttsConfig.value.gptSovits.roles.length}\nQwenTTS角色数: ${ttsConfig.value.qwenTts.roles.length}`);
+            } catch (err) {
+              console.error('❌ 保存失败:', err);
+              alert(`❌ 保存配置失败：${err.response?.data?.detail || err.message}`);
+            }
+          };
+
+          // 加载TTS配置
+          const loadTtsConfig = async () => {
+            try {
+              console.log('📥 加载TTS配置...');
+              const res = await axios.get('/api/tts-config');
+              if (res.data) {
+                ttsConfig.value = res.data;
+                console.log('✅ TTS配置加载成功:', res.data);
+                
+                // 统计角色数量
+                const gptRoles = res.data.gptSovits?.roles?.length || 0;
+                const qwenRoles = res.data.qwenTts?.roles?.length || 0;
+                
+                if (gptRoles > 0 || qwenRoles > 0) {
+                  console.log(`📊 已加载 ${gptRoles} 个 GPT-SoVITS 角色，${qwenRoles} 个 QwenTTS 角色`);
+                }
+              }
+            } catch (err) {
+              console.warn('⚠️ 加载TTS配置失败，使用默认配置:', err.message);
+            }
+          };
+
+          // 测试GPT-SoVITS角色
+          const testGptSovitsRole = async (role) => {
+            if (!role.refAudioPath || !role.promptText) {
+              alert('请先填写参考音频路径和参考文本');
+              return;
+            }
+
+            // 设置测试状态
+            role.testStatus = 'testing';
+            role.testMessage = '正在测试...';
+            role.testAudioUrl = null;
+
+            try {
+              // 构建请求参数（V2模式）
+              const params = {
+                text: '你好，这是测试文本',  // 测试文本
+                text_lang: 'zh',
+                ref_audio_path: role.refAudioPath,
+                prompt_text: role.promptText,
+                prompt_lang: role.promptLang || 'zh',
+                speed_factor: role.speedFactor || 1.0
+              };
+
+              // 确保API地址正确
+              let apiUrl = ttsConfig.value.gptSovits.apiUrl.trim();
+              if (!apiUrl.endsWith('/tts')) {
+                apiUrl += '/tts';
+              }
+
+              console.log('🔍 测试GPT-SoVITS:', { apiUrl, params });
+
+              // 使用代理API解决跨域问题
+              const proxyParams = {
+                ...params,
+                api_url: apiUrl  // 将目标API地址作为参数传递
+              };
+
+              // 发送请求到本地代理接口
+              const response = await axios.get('/api/tts-proxy/gpt-sovits', {
+                params: proxyParams,
+                responseType: 'blob',
+                timeout: 30000
+              });
+
+              console.log('✅ 请求成功:', {
+                status: response.status,
+                contentType: response.headers['content-type'],
+                dataSize: response.data.size
+              });
+
+              // 检查返回类型
+              const contentType = response.headers['content-type'];
+              
+              if (contentType && contentType.includes('audio')) {
+                // 成功：创建音频URL
+                const audioBlob = new Blob([response.data], { type: 'audio/wav' });
+                role.testAudioUrl = URL.createObjectURL(audioBlob);
+                role.testStatus = 'success';
+                role.testMessage = '✅ 测试成功！点击播放按钮试听';
+                
+                console.log('🎵 音频创建成功，准备播放');
+                
+                // 自动播放
+                playTestAudio(role.testAudioUrl);
+              } else {
+                // 返回的不是音频
+                console.warn('⚠️ Content-Type不是音频:', contentType);
+                role.testStatus = 'error';
+                role.testMessage = `❌ 返回的不是音频文件 (${contentType})`;
+              }
+
+            } catch (err) {
+              console.error('GPT-SoVITS测试失败:', err);
+              role.testStatus = 'error';
+              
+              if (err.response) {
+                // 服务器返回错误
+                try {
+                  // 尝试解析错误信息
+                  let errorText = '';
+                  if (err.response.data instanceof Blob) {
+                    errorText = await err.response.data.text();
+                  } else if (typeof err.response.data === 'string') {
+                    errorText = err.response.data;
+                  } else if (err.response.data.message) {
+                    errorText = err.response.data.message;
+                  }
+                  role.testMessage = `❌ 服务器错误: ${errorText || err.response.statusText}`;
+                } catch (parseErr) {
+                  role.testMessage = `❌ 服务器错误 (${err.response.status})`;
+                }
+              } else if (err.request) {
+                // 请求发送失败
+                role.testMessage = '❌ 无法连接到服务器';
+              } else {
+                // 其他错误
+                role.testMessage = `❌ ${err.message}`;
+              }
+            }
+          };
+
+          // 播放测试音频
+          const playTestAudio = (audioUrl) => {
+            if (!audioUrl) return;
+            
+            const audio = new Audio(audioUrl);
+            audio.play().catch(err => {
+              console.error('播放失败:', err);
+              alert('音频播放失败');
+            });
+          };
+
+          // 测试TTS连接
+          const testTtsConnection = async () => {
+            const results = [];
+            
+            // 测试GPT-SoVITS
+            if (ttsConfig.value.gptSovits.enabled) {
+              try {
+                const res = await axios.get(`${ttsConfig.value.gptSovits.apiUrl}/`, {
+                  timeout: 5000
+                });
+                results.push('✅ GPT-SoVITS连接成功');
+              } catch (err) {
+                results.push('❌ GPT-SoVITS连接失败');
+              }
+            }
+
+            // 测试QwenTTS
+            if (ttsConfig.value.qwenTts.enabled) {
+              if (ttsConfig.value.qwenTts.apiKey) {
+                results.push('✅ QwenTTS API密钥已配置');
+              } else {
+                results.push('⚠️ QwenTTS API密钥未配置');
+              }
+            }
+
+            if (results.length === 0) {
+              alert('请先启用至少一个TTS引擎');
+            } else {
+              alert(results.join('\n'));
+            }
+          };
+
+          // ==================== TTS配音功能 ====================
+          
+          // 解析SRT文件
+          const parseSrtFile = (content) => {
+            const subtitles = [];
+            const blocks = content.trim().split(/\n\s*\n/);
+            
+            blocks.forEach(block => {
+              const lines = block.trim().split('\n');
+              if (lines.length >= 3) {
+                // 匹配时间格式: 00:00:00,000 --> 00:00:05,000
+                const timePattern = new RegExp('(\\d{2}:\\d{2}:\\d{2},\\d{3})\\s*-->\\s*(\\d{2}:\\d{2}:\\d{2},\\d{3})');
+                const timeMatch = lines[1].match(timePattern);
+                if (timeMatch) {
+                  subtitles.push({
+                    index: parseInt(lines[0]),
+                    start: timeMatch[1],
+                    end: timeMatch[2],
+                    text: lines.slice(2).join(' ')
+                  });
+                }
+              }
+            });
+            
+            return subtitles;
+          };
+
+          // 处理SRT文件上传
+          const handleSrtUpload = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+              const content = await file.text();
+              const subtitles = parseSrtFile(content);
+              
+              if (subtitles.length === 0) {
+                alert('SRT文件解析失败，请检查文件格式');
+                return;
+              }
+
+              ttsDubbing.value.srtFile = file;
+              ttsDubbing.value.subtitles = subtitles;
+              
+              console.log(`✅ SRT文件解析成功，共 ${subtitles.length} 条字幕`);
+            } catch (err) {
+              alert(`SRT文件读取失败：${err.message}`);
+            }
+          };
+
+          // 获取可用的角色列表（支持单角色和多角色模式）
+          const getAvailableRoles = (engine = null) => {
+            // 如果传入了engine参数，使用该参数；否则根据当前模式自动判断
+            const targetEngine = engine || (ttsDubbingMode.value === 'multi' ? multiRoleDubbing.value.engine : ttsDubbing.value.engine);
+            
+            if (targetEngine === 'gpt-sovits') {
+              return ttsConfig.value.gptSovits.roles;
+            } else if (targetEngine === 'qwen-tts') {
+              return ttsConfig.value.qwenTts.roles;
+            }
+            return [];
+          };
+
+          // 检查是否可以开始配音
+          const canStartDubbing = () => {
+            return ttsDubbing.value.srtFile && 
+                   ttsDubbing.value.engine && 
+                   ttsDubbing.value.selectedRole &&
+                   ttsDubbing.value.task?.status !== 'running';
+          };
+
+          // 格式化配音状态
+          const formatDubbingStatus = (status) => {
+            const map = {
+              running: '配音中',
+              completed: '已完成',
+              failed: '失败'
+            };
+            return map[status] || status;
+          };
+
+          // 开始TTS配音
+          const startTtsDubbing = async () => {
+            if (!canStartDubbing()) {
+              alert('请完成所有配置');
+              return;
+            }
+
+            try {
+              // 准备请求数据
+              const formData = new FormData();
+              formData.append('srt_file', ttsDubbing.value.srtFile);
+              formData.append('engine', ttsDubbing.value.engine);
+              formData.append('role', JSON.stringify(ttsDubbing.value.selectedRole));
+              formData.append('text_lang', ttsDubbing.value.textLang);  // 新增：发送语言参数
+              formData.append('speed_factor', ttsDubbing.value.speedFactor);
+              formData.append('silence_duration', ttsDubbing.value.silenceDuration);
+              formData.append('auto_align', ttsDubbing.value.autoAlign);
+              
+              // 新增：智能双重变速机制参数
+              formData.append('enable_smart_speedup', ttsDubbing.value.enableSmartSpeedup);
+              formData.append('enable_audio_speedup', ttsDubbing.value.enableAudioSpeedup);
+              formData.append('enable_video_slowdown', ttsDubbing.value.enableVideoSlowdown);
+              formData.append('max_audio_speed_rate', ttsDubbing.value.maxAudioSpeedRate);
+              formData.append('max_video_pts_rate', ttsDubbing.value.maxVideoSpeedRate);
+              formData.append('remove_silent_gaps', ttsDubbing.value.removeSilentGaps);
+              formData.append('preserve_total_time', ttsDubbing.value.preserveTotalTime);
+              
+              if (ttsDubbing.value.engine === 'gpt-sovits') {
+                formData.append('api_url', ttsConfig.value.gptSovits.apiUrl);
+              } else if (ttsDubbing.value.engine === 'qwen-tts') {
+                formData.append('api_key', ttsConfig.value.qwenTts.apiKey);
+              }
+
+              console.log('🎬 开始TTS配音...');
+              console.log('保持总时长:', ttsDubbing.value.preserveTotalTime);
+              console.log('智能加速:', ttsDubbing.value.enableSmartSpeedup);
+              console.log('最大加速倍率:', ttsDubbing.value.maxAudioSpeedRate);
+
+              // 发送请求
+              const res = await axios.post('/api/tts-dubbing/start', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+              });
+
+              // 保存任务信息
+              ttsDubbing.value.task = res.data;
+              ttsDubbing.value.resultAudio = null;
+              ttsDubbing.value.resultPath = null;
+
+              // 启动轮询
+              startTtsDubbingPolling(res.data.task_id);
+            } catch (err) {
+              alert(`启动配音失败：${err.response?.data?.detail || err.message}`);
+            }
+          };
+
+          // 启动配音任务轮询
+          const startTtsDubbingPolling = (taskId) => {
+            if (ttsDubbingPollTimer.value) clearInterval(ttsDubbingPollTimer.value);
+
+            ttsDubbingPollTimer.value = setInterval(async () => {
+              try {
+                const res = await axios.get(`/api/tts-dubbing/status/${taskId}`);
+                ttsDubbing.value.task = res.data;
+
+                // 任务完成时获取结果
+                if (res.data.status === 'completed' && res.data.result_path) {
+                  ttsDubbing.value.resultPath = res.data.result_path;
+                  ttsDubbing.value.resultAudio = getEnhanceFileUrl(res.data.result_path);
+                  // 新增：保存SRT文件路径
+                  if (res.data.srt_path) {
+                    ttsDubbing.value.srtPath = res.data.srt_path;
+                    ttsDubbing.value.srtUrl = getEnhanceFileUrl(res.data.srt_path);
+                  }
+                  clearInterval(ttsDubbingPollTimer.value);
+                  ttsDubbingPollTimer.value = null;
+                }
+
+                // 任务失败时停止轮询
+                if (res.data.status === 'failed') {
+                  clearInterval(ttsDubbingPollTimer.value);
+                  ttsDubbingPollTimer.value = null;
+                }
+              } catch (err) {
+                clearInterval(ttsDubbingPollTimer.value);
+                ttsDubbingPollTimer.value = null;
+                console.error('获取配音进度失败:', err);
+              }
+            }, 2000);
+          };
+
+          // 打开配音结果文件夹
+          const openDubbingFolder = async () => {
+            if (!ttsDubbing.value.resultPath) return;
+            
+            try {
+              const folderPath = ttsDubbing.value.resultPath.substring(0, ttsDubbing.value.resultPath.lastIndexOf('/'));
+              await axios.post('/api/open-folder', { folder_path: folderPath });
+            } catch (err) {
+              console.error('打开文件夹失败:', err);
+            }
+          };
+
+          // ==================== 多角色配音功能 ====================
+          
+          // 处理多角色SRT文件上传
+          const handleMultiRoleSrtUpload = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            multiRoleDubbing.value.srtFile = file;
+            
+            try {
+              // 读取文件内容
+              const text = await file.text();
+              
+              // 解析SRT，提取说话人列表
+              const speakers = new Set();
+              const subtitles = [];
+              
+              // 分割字幕块
+              const blocks = text.split(/\n\s*\n/);
+              
+              for (const block of blocks) {
+                const lines = block.trim().split('\n');
+                if (lines.length >= 3) {
+                  const textLine = lines.slice(2).join(' ');
+                  
+                  // 使用match而不是exec来提取说话人
+                  const match = textLine.match(/^\[([^\]]+)\]/);
+                  
+                  if (match) {
+                    speakers.add(match[1]);
+                  }
+                  
+                  subtitles.push({
+                    text: textLine
+                  });
+                }
+              }
+              
+              multiRoleDubbing.value.detectedSpeakers = Array.from(speakers);
+              multiRoleDubbing.value.subtitles = subtitles;
+              
+              // 初始化角色映射
+              multiRoleDubbing.value.rolesMapping = {};
+              multiRoleDubbing.value.detectedSpeakers.forEach(speaker => {
+                multiRoleDubbing.value.rolesMapping[speaker] = null;
+              });
+              
+              console.log(`✅ 检测到 ${speakers.size} 个说话人:`, Array.from(speakers));
+              console.log('📋 说话人列表:', multiRoleDubbing.value.detectedSpeakers);
+              
+            } catch (err) {
+              console.error('解析SRT文件失败:', err);
+              alert('解析SRT文件失败: ' + err.message);
+            }
+          };
+
+          // 获取某个说话人的字幕数量
+          const getSpeakerSubtitleCount = (speaker) => {
+            return multiRoleDubbing.value.subtitles.filter(sub => 
+              sub.text.includes(`[${speaker}]`)
+            ).length;
+          };
+
+          // 检查是否可以开始多角色配音
+          const canStartMultiRoleDubbing = () => {
+            if (!multiRoleDubbing.value.srtFile) return false;
+            if (!multiRoleDubbing.value.engine) return false;
+            if (multiRoleDubbing.value.detectedSpeakers.length === 0) return false;
+            
+            // 检查所有说话人是否都已分配角色
+            for (const speaker of multiRoleDubbing.value.detectedSpeakers) {
+              if (!multiRoleDubbing.value.rolesMapping[speaker]) {
+                return false;
+              }
+            }
+            
+            return true;
+          };
+
+          // 开始多角色配音
+          const startMultiRoleDubbing = async () => {
+            if (!canStartMultiRoleDubbing()) {
+              alert('请完成所有配置');
+              return;
+            }
+            
+            try {
+              console.log('🎬 开始多角色配音...');
+              
+              const formData = new FormData();
+              formData.append('srt_file', multiRoleDubbing.value.srtFile);
+              formData.append('engine', multiRoleDubbing.value.engine);
+              formData.append('roles_mapping', JSON.stringify(multiRoleDubbing.value.rolesMapping));
+              formData.append('text_lang', multiRoleDubbing.value.textLang);
+              formData.append('speed_factor', multiRoleDubbing.value.speedFactor);
+              formData.append('silence_duration', multiRoleDubbing.value.silenceDuration);
+              formData.append('auto_align', multiRoleDubbing.value.autoAlign);
+              
+              // 新增：智能双重变速机制参数
+              formData.append('enable_smart_speedup', multiRoleDubbing.value.enableSmartSpeedup);
+              formData.append('enable_audio_speedup', multiRoleDubbing.value.enableAudioSpeedup);
+              formData.append('enable_video_slowdown', multiRoleDubbing.value.enableVideoSlowdown);
+              formData.append('max_audio_speed_rate', multiRoleDubbing.value.maxAudioSpeedRate);
+              formData.append('max_video_pts_rate', multiRoleDubbing.value.maxVideoSpeedRate);
+              formData.append('remove_silent_gaps', multiRoleDubbing.value.removeSilentGaps);
+              formData.append('preserve_total_time', multiRoleDubbing.value.preserveTotalTime);
+              
+              // 添加API配置
+              if (multiRoleDubbing.value.engine === 'gpt-sovits') {
+                formData.append('api_url', ttsConfig.value.gptSovits.apiUrl);
+              } else if (multiRoleDubbing.value.engine === 'qwen-tts') {
+                formData.append('api_key', ttsConfig.value.qwenTts.apiKey);
+              }
+              
+              // 发送请求
+              const res = await axios.post('/api/tts-dubbing/multi-role', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+              });
+              
+              console.log('✅ 多角色配音任务已启动:', res.data);
+              console.log('智能加速:', multiRoleDubbing.value.enableSmartSpeedup);
+              console.log('最大加速倍率:', multiRoleDubbing.value.maxAudioSpeedRate);
+              
+              // 开始轮询任务状态
+              startMultiRoleDubbingPolling(res.data.task_id);
+              
+            } catch (err) {
+              console.error('❌ 启动多角色配音失败:', err);
+              alert('启动多角色配音失败: ' + (err.response?.data?.detail || err.message));
+            }
+          };
+
+          // 启动多角色配音任务轮询
+          const startMultiRoleDubbingPolling = (taskId) => {
+            if (multiRoleDubbingPollTimer.value) clearInterval(multiRoleDubbingPollTimer.value);
+            
+            multiRoleDubbingPollTimer.value = setInterval(async () => {
+              try {
+                const res = await axios.get(`/api/tts-dubbing/status/${taskId}`);
+                multiRoleDubbing.value.task = res.data;
+                
+                // 任务完成时获取结果
+                if (res.data.status === 'completed' && res.data.result_path) {
+                  multiRoleDubbing.value.resultPath = res.data.result_path;
+                  multiRoleDubbing.value.resultAudio = getEnhanceFileUrl(res.data.result_path);
+                  // 新增：保存SRT文件路径
+                  if (res.data.srt_path) {
+                    multiRoleDubbing.value.srtPath = res.data.srt_path;
+                    multiRoleDubbing.value.srtUrl = getEnhanceFileUrl(res.data.srt_path);
+                  }
+                  clearInterval(multiRoleDubbingPollTimer.value);
+                  multiRoleDubbingPollTimer.value = null;
+                }
+                
+                // 任务失败时停止轮询
+                if (res.data.status === 'failed') {
+                  clearInterval(multiRoleDubbingPollTimer.value);
+                  multiRoleDubbingPollTimer.value = null;
+                }
+              } catch (err) {
+                clearInterval(multiRoleDubbingPollTimer.value);
+                multiRoleDubbingPollTimer.value = null;
+                console.error('获取多角色配音进度失败:', err);
+              }
+            }, 2000);
+          };
+
+          // 打开多角色配音结果文件夹
+          const openMultiRoleDubbingFolder = async () => {
+            if (!multiRoleDubbing.value.resultPath) return;
+            
+            try {
+              const folderPath = multiRoleDubbing.value.resultPath.substring(0, multiRoleDubbing.value.resultPath.lastIndexOf('/'));
+              await axios.post('/api/open-folder', { folder_path: folderPath });
+            } catch (err) {
+              console.error('打开文件夹失败:', err);
+            }
+          };
+
           return {
             currentTask,
             formatStatus,
@@ -643,6 +2674,8 @@
             activeTab,
             errorMessage,
             go,
+            goOcrSrt,
+            goMp4ToWav,
             startTask,
             uploadedFile,
             vocalCount,
@@ -660,6 +2693,44 @@
             translate,
             extractSpeech,
             extractSpeechTimeline,
+            // ClearVoice 语音增强
+            enhanceInputFile,
+            enhanceOutputPath,
+            enhanceTask,
+            enhanceResultFolder,
+            enhanceResultFile,
+            enhanceAudioUploading,
+            handleEnhanceAudioUpload,
+            startEnhanceTask,
+            getEnhanceFileUrl,
+            // TTS模型管理
+            showTtsModal,
+            ttsConfig,
+            addGptSovitsRole,
+            removeGptSovitsRole,
+            addQwenTtsRole,
+            removeQwenTtsRole,
+            saveTtsConfig,
+            loadTtsConfig,
+            testTtsConnection,
+            testGptSovitsRole,
+            playTestAudio,
+            // TTS配音
+            ttsDubbingMode,
+            ttsDubbing,
+            handleSrtUpload,
+            getAvailableRoles,
+            canStartDubbing,
+            formatDubbingStatus,
+            startTtsDubbing,
+            openDubbingFolder,
+            // 多角色配音
+            multiRoleDubbing,
+            handleMultiRoleSrtUpload,
+            getSpeakerSubtitleCount,
+            canStartMultiRoleDubbing,
+            startMultiRoleDubbing,
+            openMultiRoleDubbingFolder,
           };
         },
       }).mount("#app");

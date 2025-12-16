@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>MP4转WAV - 视频转音频工具</title>
+    <link rel="icon" href="favicon.png" type="image/png" sizes="32x32" />
+    <script src="./vue.global.prod.js"></script>
+    <script src="./axios.min.js"></script>
+    <script src="./tailwindcss.js"></script>
+    <link href="./font-awesome.min.css" rel="stylesheet" />
+
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: "#7c4dff",
+              dark: "#121212",
+              darker: "#212121",
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+
+  <body class="bg-dark text-gray-200 font-sans m-0 p-5 md:p-6">
+    <div id="app" class="max-w-6xl mx-auto">
+      <!-- 导航标签栏 -->
+      <div class="flex gap-5 border-b-2 border-primary mb-5">
+        <div
+          class="tab px-2 py-1 cursor-pointer text-primary border-b-2 border-primary"
+        >
+          MP4转WAV
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goTo('index.html?tab=task3')"
+        >
+          ClearVoice语音增强
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goTo('ocr_srt_speaker.html')"
+        >
+          OCR字幕说话人分配
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goTo('index.html?tab=task1')"
+        >
+          长音频批量
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goTo('tool_merge.html')"
+        >
+          音视频合并
+        </div>
+      </div>
+
+      <!-- 主内容 -->
+      <div>
+        <h2 class="text-center text-primary mb-3 text-2xl font-semibold">
+          MP4/视频转WAV音频 - 快速提取音频轨道
+        </h2>
+
+        <div class="bg-darker p-5 rounded-md mb-5">
+          <!-- 输入文件 -->
+          <div class="mb-4 p-3 border-b border-gray-700">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-gray-300 font-medium">输入视频文件：</span>
+              <label class="cursor-pointer px-3 py-1 bg-primary/20 hover:bg-primary/30 rounded text-sm transition-colors">
+                <i class="fa fa-upload mr-1"></i>
+                上传视频
+                <input
+                  type="file"
+                  accept=".mp4,.avi,.mov,.mkv,.flv,.wmv"
+                  @change="handleFileUpload"
+                  class="hidden"
+                />
+              </label>
+            </div>
+            <input
+              v-model="inputPath"
+              type="text"
+              placeholder="推荐：直接输入本地文件路径，如 C:\Users\Admin\Desktop\video.mp4"
+              class="bg-transparent outline-none text-sm w-full placeholder-gray-500 focus:border-purple-400 transition-all duration-200 border-b border-gray-600 pb-1"
+            />
+            <p class="text-xs text-gray-500 mt-1">
+              <i class="fa fa-info-circle text-primary mr-1"></i>
+              支持格式：MP4, AVI, MOV, MKV, FLV, WMV
+            </p>
+          </div>
+
+          <!-- 输出目录 -->
+          <div class="mb-4 p-3 border-b border-gray-700">
+            <span class="text-gray-300 font-medium block mb-2">输出目录：</span>
+            <input
+              v-model="outputDir"
+              type="text"
+              placeholder="输出目录，默认：output"
+              class="bg-transparent outline-none text-sm w-full placeholder-gray-500 focus:border-purple-400 transition-all duration-200 border-b border-gray-600 pb-1"
+            />
+          </div>
+
+          <!-- 音频参数 -->
+          <div class="mb-4 p-3 border-b border-gray-700">
+            <span class="text-gray-300 font-medium block mb-3">音频参数：</span>
+            
+            <div class="flex items-center mb-3">
+              <label class="text-gray-400 min-w-[120px]">采样率：</label>
+              <select
+                v-model="sampleRate"
+                class="bg-darker border border-gray-600 rounded px-3 py-1 text-sm focus:border-primary outline-none"
+              >
+                <option value="8000">8000 Hz (电话音质)</option>
+                <option value="16000">16000 Hz (语音识别推荐)</option>
+                <option value="22050">22050 Hz (FM广播)</option>
+                <option value="44100">44100 Hz (CD音质)</option>
+                <option value="48000">48000 Hz (专业音频)</option>
+              </select>
+            </div>
+
+            <div class="flex items-center">
+              <label class="text-gray-400 min-w-[120px]">声道数：</label>
+              <select
+                v-model="channels"
+                class="bg-darker border border-gray-600 rounded px-3 py-1 text-sm focus:border-primary outline-none"
+              >
+                <option value="1">单声道 (Mono)</option>
+                <option value="2">立体声 (Stereo)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 开始转换按钮 -->
+          <div class="flex justify-center mt-5">
+            <button
+              @click="startConvert"
+              :disabled="!inputPath || currentTask"
+              class="px-6 py-2 bg-primary hover:bg-primary/80 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-md transition-colors flex items-center gap-2"
+            >
+              <i class="fa" :class="currentTask ? 'fa-spinner fa-spin' : 'fa-play'"></i>
+              <span>{{ currentTask ? '转换中...' : '开始转换' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 进度显示 -->
+        <div v-if="currentTask" class="bg-darker p-5 rounded-md mb-5">
+          <h3 class="text-lg font-semibold mb-3 flex items-center gap-2">
+            <i class="fa fa-tasks text-primary"></i>
+            转换进度
+          </h3>
+          <div class="mb-3">
+            <div class="flex justify-between text-sm mb-1">
+              <span>{{ currentTask.status }}</span>
+              <span>{{ currentTask.progress }}%</span>
+            </div>
+            <div class="w-full bg-gray-700 rounded-full h-2">
+              <div
+                class="bg-primary h-2 rounded-full transition-all duration-300"
+                :style="{ width: currentTask.progress + '%' }"
+              ></div>
+            </div>
+          </div>
+          <div class="bg-black/30 p-3 rounded text-xs font-mono max-h-60 overflow-y-auto">
+            <pre class="whitespace-pre-wrap">{{ currentTask.output }}</pre>
+          </div>
+        </div>
+
+        <!-- 结果显示 -->
+        <div v-if="resultReady" class="bg-darker p-5 rounded-md">
+          <h3 class="text-lg font-semibold mb-3 flex items-center gap-2">
+            <i class="fa fa-check-circle text-green-500"></i>
+            转换完成
+          </h3>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between p-3 bg-black/30 rounded">
+              <div class="flex items-center gap-3">
+                <i class="fa fa-file-audio-o text-primary text-2xl"></i>
+                <div>
+                  <p class="text-sm font-medium">{{ getFileName(wavFile) }}</p>
+                  <p class="text-xs text-gray-400">{{ wavFile }}</p>
+                </div>
+              </div>
+              <button
+                @click="openFolder(wavFile)"
+                class="px-3 py-1 bg-primary/20 hover:bg-primary/30 rounded text-sm transition-colors"
+              >
+                <i class="fa fa-folder-open mr-1"></i>
+                打开文件夹
+              </button>
+            </div>
+            
+            <!-- 音频播放器 -->
+            <div class="p-3 bg-black/30 rounded">
+              <p class="text-sm text-gray-400 mb-2">预览音频：</p>
+              <audio controls class="w-full">
+                <source :src="getAudioUrl(wavFile)" type="audio/wav" />
+                您的浏览器不支持音频播放
+              </audio>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const { createApp, ref, onUnmounted } = Vue;
+
+      createApp({
+        setup() {
+          const inputPath = ref("");
+          const outputDir = ref("output");
+          const sampleRate = ref("16000");
+          const channels = ref("1");
+          const currentTask = ref(null);
+          const resultReady = ref(false);
+          const wavFile = ref("");
+          const pollTimer = ref(null);
+
+          const goTo = (page) => {
+            window.location.href = `/static/${page}`;
+          };
+
+          const handleFileUpload = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            try {
+              const res = await axios.post("/api/upload-video", formData, {
+                headers: { "Content-Type": "multipart/form-data" },
+              });
+              inputPath.value = res.data.save_path;
+              alert(`视频上传成功：${res.data.filename}`);
+            } catch (err) {
+              alert(`上传失败：${err.response?.data?.detail || err.message}`);
+            } finally {
+              event.target.value = "";
+            }
+          };
+
+          // 清理路径中的不可见 Unicode 字符
+          const cleanPath = (path) => {
+            if (!path) return path;
+            // 移除常见的不可见控制字符
+            return path
+              .replace(/[\u200B-\u200D\u202A-\u202E\uFEFF]/g, '') // 零宽字符和方向标记
+              .trim(); // 去除首尾空格
+          };
+
+          const startConvert = async () => {
+            if (!inputPath.value) {
+              alert("请输入视频文件路径");
+              return;
+            }
+
+            // 清理路径
+            const cleanedInputPath = cleanPath(inputPath.value);
+            const cleanedOutputDir = cleanPath(outputDir.value);
+
+            resultReady.value = false;
+            wavFile.value = "";
+
+            try {
+              const res = await axios.post("/api/tasks", {
+                script_name: "mp4_to_wav.py",
+                script_args: [
+                  "--input",
+                  cleanedInputPath,
+                  "--output-dir",
+                  cleanedOutputDir,
+                  "--sample-rate",
+                  sampleRate.value,
+                  "--channels",
+                  channels.value,
+                ],
+              });
+
+              currentTask.value = res.data;
+              startPolling(res.data.task_id);
+            } catch (err) {
+              alert(`启动失败：${err.response?.data?.detail || err.message}`);
+            }
+          };
+
+          const startPolling = (taskId) => {
+            pollTimer.value = setInterval(async () => {
+              try {
+                const res = await axios.get(`/api/tasks/${taskId}`);
+                currentTask.value = res.data;
+
+                // 检查输出中的结果文件
+                if (res.data.output && res.data.output.includes("result_wav_file：")) {
+                  const match = res.data.output.match(/result_wav_file：(.+)/);
+                  if (match) {
+                    wavFile.value = match[1].trim();
+                  }
+                }
+
+                if (res.data.status === "completed" || res.data.status === "failed") {
+                  clearInterval(pollTimer.value);
+                  if (res.data.status === "completed") {
+                    resultReady.value = true;
+                  }
+                }
+              } catch (err) {
+                console.error("轮询失败:", err);
+                clearInterval(pollTimer.value);
+              }
+            }, 1000);
+          };
+
+          const openFolder = async (filePath) => {
+            try {
+              await axios.post("/api/open-folder", {
+                folder_path: filePath.substring(0, filePath.lastIndexOf("/")),
+              });
+            } catch (err) {
+              alert(`打开文件夹失败：${err.response?.data?.detail || err.message}`);
+            }
+          };
+
+          const getFileName = (path) => {
+            return path ? path.split("/").pop() : "";
+          };
+
+          const getAudioUrl = (path) => {
+            return path ? `/output/${path.split("/output/")[1]}` : "";
+          };
+
+          onUnmounted(() => {
+            if (pollTimer.value) {
+              clearInterval(pollTimer.value);
+            }
+          });
+
+          return {
+            inputPath,
+            outputDir,
+            sampleRate,
+            channels,
+            currentTask,
+            resultReady,
+            wavFile,
+            goTo,
+            handleFileUpload,
+            startConvert,
+            openFolder,
+            getFileName,
+            getAudioUrl,
+          };
+        },
+      }).mount("#app");
+    </script>
+  </body>
+</html>

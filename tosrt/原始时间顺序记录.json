@@ -1,0 +1,641 @@
+[
+  {
+    "序号": 45,
+    "开始时间(秒)": 0.0,
+    "结束时间(秒)": 9.62,
+    "持续时间(秒)": 9.62,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_45.mp4"
+  },
+  {
+    "序号": 1,
+    "开始时间(秒)": 9.62,
+    "结束时间(秒)": 12.2,
+    "持续时间(秒)": 2.58,
+    "说话人": "spk00",
+    "说话内容": "现在这所医院由我们暂时接管。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk00/seg_1.mp4"
+  },
+  {
+    "序号": 2,
+    "开始时间(秒)": 12.42,
+    "结束时间(秒)": 13.41,
+    "持续时间(秒)": 1.0,
+    "说话人": "spk00",
+    "说话内容": "所有人。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk00/seg_2.mp4"
+  },
+  {
+    "序号": 3,
+    "开始时间(秒)": 13.56,
+    "结束时间(秒)": 14.21,
+    "持续时间(秒)": 0.64,
+    "说话人": "spk00",
+    "说话内容": "上了。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk00/seg_3.mp4"
+  },
+  {
+    "序号": 4,
+    "开始时间(秒)": 14.46,
+    "结束时间(秒)": 16.4,
+    "持续时间(秒)": 1.94,
+    "说话人": "spk01",
+    "说话内容": "凭什么我们是过来看病的？",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk01/seg_4.mp4"
+  },
+  {
+    "序号": 5,
+    "开始时间(秒)": 16.52,
+    "结束时间(秒)": 20.92,
+    "持续时间(秒)": 4.4,
+    "说话人": "spk03",
+    "说话内容": "是啊，这又不是你家开的，你算老几？酒瓶。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk03/seg_5.mp4"
+  },
+  {
+    "序号": 6,
+    "开始时间(秒)": 21.41,
+    "结束时间(秒)": 24.43,
+    "持续时间(秒)": 3.02,
+    "说话人": "spk03",
+    "说话内容": "我们是南州武圣家族。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk03/seg_6.mp4"
+  },
+  {
+    "序号": 46,
+    "开始时间(秒)": 24.43,
+    "结束时间(秒)": 25.44,
+    "持续时间(秒)": 1.01,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_46.mp4"
+  },
+  {
+    "序号": 7,
+    "开始时间(秒)": 25.44,
+    "结束时间(秒)": 25.95,
+    "持续时间(秒)": 0.51,
+    "说话人": "spk03",
+    "说话内容": "違う",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk03/seg_7.mp4"
+  },
+  {
+    "序号": 47,
+    "开始时间(秒)": 25.95,
+    "结束时间(秒)": 28.25,
+    "持续时间(秒)": 2.3,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_47.mp4"
+  },
+  {
+    "序号": 8,
+    "开始时间(秒)": 28.25,
+    "结束时间(秒)": 29.55,
+    "持续时间(秒)": 1.3,
+    "说话人": "spk05",
+    "说话内容": "叶少大人说。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk05/seg_8.mp4"
+  },
+  {
+    "序号": 9,
+    "开始时间(秒)": 29.73,
+    "结束时间(秒)": 32.62,
+    "持续时间(秒)": 2.89,
+    "说话人": "spk05",
+    "说话内容": "你们这里有整个龙国最好的医生。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk05/seg_9.mp4"
+  },
+  {
+    "序号": 48,
+    "开始时间(秒)": 32.62,
+    "结束时间(秒)": 34.35,
+    "持续时间(秒)": 1.74,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_48.mp4"
+  },
+  {
+    "序号": 10,
+    "开始时间(秒)": 34.35,
+    "结束时间(秒)": 35.3,
+    "持续时间(秒)": 0.95,
+    "说话人": "spk05",
+    "说话内容": "让他来见我。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk05/seg_10.mp4"
+  },
+  {
+    "序号": 49,
+    "开始时间(秒)": 35.3,
+    "结束时间(秒)": 35.82,
+    "持续时间(秒)": 0.52,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_49.mp4"
+  },
+  {
+    "序号": 11,
+    "开始时间(秒)": 35.82,
+    "结束时间(秒)": 39.23,
+    "持续时间(秒)": 3.41,
+    "说话人": "spk02",
+    "说话内容": "医院是治病救人的地方，不是你们用来撒泼的。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_11.mp4"
+  },
+  {
+    "序号": 50,
+    "开始时间(秒)": 39.23,
+    "结束时间(秒)": 39.79,
+    "持续时间(秒)": 0.56,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_50.mp4"
+  },
+  {
+    "序号": 12,
+    "开始时间(秒)": 39.79,
+    "结束时间(秒)": 41.83,
+    "持续时间(秒)": 2.04,
+    "说话人": "spk02",
+    "说话内容": "你是谁？知道在和谁说话吗？",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_12.mp4"
+  },
+  {
+    "序号": 51,
+    "开始时间(秒)": 41.83,
+    "结束时间(秒)": 42.51,
+    "持续时间(秒)": 0.67,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_51.mp4"
+  },
+  {
+    "序号": 13,
+    "开始时间(秒)": 42.51,
+    "结束时间(秒)": 43.47,
+    "持续时间(秒)": 0.96,
+    "说话人": "spk02",
+    "说话内容": "我是谁不重要。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_13.mp4"
+  },
+  {
+    "序号": 52,
+    "开始时间(秒)": 43.47,
+    "结束时间(秒)": 43.97,
+    "持续时间(秒)": 0.51,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_52.mp4"
+  },
+  {
+    "序号": 14,
+    "开始时间(秒)": 43.97,
+    "结束时间(秒)": 46.59,
+    "持续时间(秒)": 2.62,
+    "说话人": "spk02",
+    "说话内容": "重要的是，我可以解他的毒。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_14.mp4"
+  },
+  {
+    "序号": 53,
+    "开始时间(秒)": 46.59,
+    "结束时间(秒)": 48.56,
+    "持续时间(秒)": 1.97,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_53.mp4"
+  },
+  {
+    "序号": 15,
+    "开始时间(秒)": 48.56,
+    "结束时间(秒)": 50.66,
+    "持续时间(秒)": 2.09,
+    "说话人": "spk05",
+    "说话内容": "你能解我父亲身上的毒。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk05/seg_15.mp4"
+  },
+  {
+    "序号": 16,
+    "开始时间(秒)": 50.66,
+    "结束时间(秒)": 56.75,
+    "持续时间(秒)": 6.09,
+    "说话人": "spk01",
+    "说话内容": "叶辰，你不要命了？那位可是当今武圣，你一个实习医生瞎凑什么热闹？一个实习医生。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk01/seg_16.mp4"
+  },
+  {
+    "序号": 54,
+    "开始时间(秒)": 56.75,
+    "结束时间(秒)": 57.95,
+    "持续时间(秒)": 1.2,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_54.mp4"
+  },
+  {
+    "序号": 17,
+    "开始时间(秒)": 57.95,
+    "结束时间(秒)": 58.89,
+    "持续时间(秒)": 0.95,
+    "说话人": "spk01",
+    "说话内容": "他是副科。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk01/seg_17.mp4"
+  },
+  {
+    "序号": 55,
+    "开始时间(秒)": 58.89,
+    "结束时间(秒)": 62.62,
+    "持续时间(秒)": 3.73,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_55.mp4"
+  },
+  {
+    "序号": 18,
+    "开始时间(秒)": 62.62,
+    "结束时间(秒)": 63.68,
+    "持续时间(秒)": 1.06,
+    "说话人": "spk02",
+    "说话内容": "看病，我欢迎。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_18.mp4"
+  },
+  {
+    "序号": 19,
+    "开始时间(秒)": 64.0,
+    "结束时间(秒)": 66.11,
+    "持续时间(秒)": 2.11,
+    "说话人": "spk02",
+    "说话内容": "闹事，我会让你知道。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_19.mp4"
+  },
+  {
+    "序号": 20,
+    "开始时间(秒)": 66.38,
+    "结束时间(秒)": 66.94,
+    "持续时间(秒)": 0.56,
+    "说话人": "spk02",
+    "说话内容": "医者。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_20.mp4"
+  },
+  {
+    "序号": 21,
+    "开始时间(秒)": 67.33,
+    "结束时间(秒)": 68.05,
+    "持续时间(秒)": 0.73,
+    "说话人": "spk02",
+    "说话内容": "可以救。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_21.mp4"
+  },
+  {
+    "序号": 22,
+    "开始时间(秒)": 68.48,
+    "结束时间(秒)": 69.59,
+    "持续时间(秒)": 1.11,
+    "说话人": "spk02",
+    "说话内容": "能杀人。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_22.mp4"
+  },
+  {
+    "序号": 23,
+    "开始时间(秒)": 69.71,
+    "结束时间(秒)": 70.47,
+    "持续时间(秒)": 0.76,
+    "说话人": "spk04",
+    "说话内容": "是。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_23.mp4"
+  },
+  {
+    "序号": 56,
+    "开始时间(秒)": 70.47,
+    "结束时间(秒)": 73.52,
+    "持续时间(秒)": 3.05,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_56.mp4"
+  },
+  {
+    "序号": 24,
+    "开始时间(秒)": 73.52,
+    "结束时间(秒)": 76.24,
+    "持续时间(秒)": 2.72,
+    "说话人": "spk04",
+    "说话内容": "阁下是想与我整个万家为敌吗？",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_24.mp4"
+  },
+  {
+    "序号": 25,
+    "开始时间(秒)": 76.61,
+    "结束时间(秒)": 77.18,
+    "持续时间(秒)": 0.57,
+    "说话人": "spk02",
+    "说话内容": "回皮。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_25.mp4"
+  },
+  {
+    "序号": 26,
+    "开始时间(秒)": 77.61,
+    "结束时间(秒)": 78.26,
+    "持续时间(秒)": 0.66,
+    "说话人": "spk02",
+    "说话内容": "你们配吗？",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_26.mp4"
+  },
+  {
+    "序号": 57,
+    "开始时间(秒)": 78.26,
+    "结束时间(秒)": 82.48,
+    "持续时间(秒)": 4.22,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_57.mp4"
+  },
+  {
+    "序号": 27,
+    "开始时间(秒)": 82.48,
+    "结束时间(秒)": 85.38,
+    "持续时间(秒)": 2.9,
+    "说话人": "spk04",
+    "说话内容": "这是父亲面对强敌时才会展现的领域。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_27.mp4"
+  },
+  {
+    "序号": 58,
+    "开始时间(秒)": 85.38,
+    "结束时间(秒)": 87.56,
+    "持续时间(秒)": 2.18,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_58.mp4"
+  },
+  {
+    "序号": 28,
+    "开始时间(秒)": 87.56,
+    "结束时间(秒)": 88.35,
+    "持续时间(秒)": 0.79,
+    "说话人": "spk03",
+    "说话内容": "方才那人呢？",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk03/seg_28.mp4"
+  },
+  {
+    "序号": 59,
+    "开始时间(秒)": 88.35,
+    "结束时间(秒)": 93.57,
+    "持续时间(秒)": 5.21,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_59.mp4"
+  },
+  {
+    "序号": 29,
+    "开始时间(秒)": 93.57,
+    "结束时间(秒)": 94.5,
+    "持续时间(秒)": 0.93,
+    "说话人": "spk03",
+    "说话内容": "放开你的脏手。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk03/seg_29.mp4"
+  },
+  {
+    "序号": 60,
+    "开始时间(秒)": 94.5,
+    "结束时间(秒)": 95.22,
+    "持续时间(秒)": 0.73,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_60.mp4"
+  },
+  {
+    "序号": 30,
+    "开始时间(秒)": 95.22,
+    "结束时间(秒)": 96.45,
+    "持续时间(秒)": 1.23,
+    "说话人": "spk03",
+    "说话内容": "给我拿下他！住手。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk03/seg_30.mp4"
+  },
+  {
+    "序号": 61,
+    "开始时间(秒)": 96.45,
+    "结束时间(秒)": 101.38,
+    "持续时间(秒)": 4.93,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_61.mp4"
+  },
+  {
+    "序号": 31,
+    "开始时间(秒)": 101.38,
+    "结束时间(秒)": 102.01,
+    "持续时间(秒)": 0.62,
+    "说话人": "spk04",
+    "说话内容": "谢先生。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_31.mp4"
+  },
+  {
+    "序号": 32,
+    "开始时间(秒)": 102.5,
+    "结束时间(秒)": 103.88,
+    "持续时间(秒)": 1.38,
+    "说话人": "spk04",
+    "说话内容": "你真的有把握救我父亲吗？",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_32.mp4"
+  },
+  {
+    "序号": 33,
+    "开始时间(秒)": 104.12,
+    "结束时间(秒)": 110.04,
+    "持续时间(秒)": 5.92,
+    "说话人": "spk03",
+    "说话内容": "还有个屁把握！小姐，他不过是个妇科医生，他若真有这本事，早就名满龙国了。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk03/seg_33.mp4"
+  },
+  {
+    "序号": 62,
+    "开始时间(秒)": 110.04,
+    "结束时间(秒)": 112.05,
+    "持续时间(秒)": 2.01,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_62.mp4"
+  },
+  {
+    "序号": 34,
+    "开始时间(秒)": 112.05,
+    "结束时间(秒)": 113.19,
+    "持续时间(秒)": 1.15,
+    "说话人": "spk04",
+    "说话内容": "我父亲所中之毒。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_34.mp4"
+  },
+  {
+    "序号": 35,
+    "开始时间(秒)": 113.48,
+    "结束时间(秒)": 115.78,
+    "持续时间(秒)": 2.3,
+    "说话人": "spk04",
+    "说话内容": "乃是天下奇毒九幽断魂散。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_35.mp4"
+  },
+  {
+    "序号": 63,
+    "开始时间(秒)": 115.78,
+    "结束时间(秒)": 116.4,
+    "持续时间(秒)": 0.62,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_63.mp4"
+  },
+  {
+    "序号": 36,
+    "开始时间(秒)": 116.4,
+    "结束时间(秒)": 118.32,
+    "持续时间(秒)": 1.92,
+    "说话人": "spk04",
+    "说话内容": "根据无上神典的药圣典籍。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_36.mp4"
+  },
+  {
+    "序号": 64,
+    "开始时间(秒)": 118.32,
+    "结束时间(秒)": 118.97,
+    "持续时间(秒)": 0.64,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_64.mp4"
+  },
+  {
+    "序号": 37,
+    "开始时间(秒)": 118.97,
+    "结束时间(秒)": 120.1,
+    "持续时间(秒)": 1.13,
+    "说话人": "spk04",
+    "说话内容": "此毒根本无解。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_37.mp4"
+  },
+  {
+    "序号": 65,
+    "开始时间(秒)": 120.1,
+    "结束时间(秒)": 120.77,
+    "持续时间(秒)": 0.67,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_65.mp4"
+  },
+  {
+    "序号": 38,
+    "开始时间(秒)": 120.77,
+    "结束时间(秒)": 123.44,
+    "持续时间(秒)": 2.67,
+    "说话人": "spk04",
+    "说话内容": "就连医圣李沧澜使尽毕生所学。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_38.mp4"
+  },
+  {
+    "序号": 66,
+    "开始时间(秒)": 123.44,
+    "结束时间(秒)": 124.06,
+    "持续时间(秒)": 0.62,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_66.mp4"
+  },
+  {
+    "序号": 39,
+    "开始时间(秒)": 124.06,
+    "结束时间(秒)": 125.73,
+    "持续时间(秒)": 1.67,
+    "说话人": "spk04",
+    "说话内容": "也只能为他强行续命三。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_39.mp4"
+  },
+  {
+    "序号": 67,
+    "开始时间(秒)": 125.73,
+    "结束时间(秒)": 126.51,
+    "持续时间(秒)": 0.78,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_67.mp4"
+  },
+  {
+    "序号": 40,
+    "开始时间(秒)": 126.51,
+    "结束时间(秒)": 129.16,
+    "持续时间(秒)": 2.65,
+    "说话人": "spk02",
+    "说话内容": "李沧兰那老小子真是越活越回去了。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_40.mp4"
+  },
+  {
+    "序号": 68,
+    "开始时间(秒)": 129.16,
+    "结束时间(秒)": 129.73,
+    "持续时间(秒)": 0.57,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_68.mp4"
+  },
+  {
+    "序号": 41,
+    "开始时间(秒)": 129.73,
+    "结束时间(秒)": 130.95,
+    "持续时间(秒)": 1.22,
+    "说话人": "spk02",
+    "说话内容": "区区断魂散。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_41.mp4"
+  },
+  {
+    "序号": 42,
+    "开始时间(秒)": 131.12,
+    "结束时间(秒)": 132.16,
+    "持续时间(秒)": 1.05,
+    "说话人": "spk02",
+    "说话内容": "就束手无策。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk02/seg_42.mp4"
+  },
+  {
+    "序号": 69,
+    "开始时间(秒)": 132.16,
+    "结束时间(秒)": 132.82,
+    "持续时间(秒)": 0.66,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_69.mp4"
+  },
+  {
+    "序号": 43,
+    "开始时间(秒)": 132.82,
+    "结束时间(秒)": 133.56,
+    "持续时间(秒)": 0.74,
+    "说话人": "spk01",
+    "说话内容": "称医圣。",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk01/seg_43.mp4"
+  },
+  {
+    "序号": 70,
+    "开始时间(秒)": 133.56,
+    "结束时间(秒)": 134.51,
+    "持续时间(秒)": 0.94,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_70.mp4"
+  },
+  {
+    "序号": 44,
+    "开始时间(秒)": 134.51,
+    "结束时间(秒)": 135.2,
+    "持续时间(秒)": 0.69,
+    "说话人": "spk04",
+    "说话内容": "你说什么？",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/spk04/seg_44.mp4"
+  },
+  {
+    "序号": 71,
+    "开始时间(秒)": 135.2,
+    "结束时间(秒)": 137.09,
+    "持续时间(秒)": 1.89,
+    "说话人": "unknown",
+    "说话内容": "",
+    "音频路径": "D:/pyannote-audio-web-ui/pyannote-audio-web-ui/output/cs2.mp4/speaker_audios/unknown/seg_71.mp4"
+  }
+]

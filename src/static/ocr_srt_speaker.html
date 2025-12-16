@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>OCR字幕说话人分配</title>
+    <link rel="icon" href="favicon.png" type="image/png" sizes="32x32" />
+    <!-- 引入Vue3 -->
+    <script src="./vue.global.prod.js"></script>
+    <!-- 引入Axios（处理HTTP请求） -->
+    <script src="./axios.min.js"></script>
+    <!-- 引入Tailwind CSS（快速美化界面，可选） -->
+    <script src="./tailwindcss.js"></script>
+    <!-- 引入Font Awesome -->
+    <link href="./font-awesome.min.css" rel="stylesheet" />
+
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: "#7c4dff",
+              dark: "#121212",
+              darker: "#212121",
+            },
+          },
+        },
+      };
+    </script>
+
+    <style type="text/tailwindcss">
+      @layer utilities {
+        .content-auto {
+          content-visibility: auto;
+        }
+      }
+    </style>
+  </head>
+
+  <body class="bg-dark text-gray-200 font-sans m-0 p-5 md:p-6">
+    <div id="app" class="max-w-6xl mx-auto">
+      <!-- 顶部标签栏 -->
+      <div class="flex gap-5 border-b-2 border-primary mb-5">
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goMp4ToWav()"
+        >
+          MP4转WAV
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goClearVoice()"
+        >
+          ClearVoice语音增强
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-primary border-b-2 border-primary"
+        >
+          OCR字幕说话人分配
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goHome()"
+        >
+          长音频批量
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goMerge()"
+        >
+          音视频合并
+        </div>
+      </div>
+
+      <!-- 主内容区域 -->
+      <div>
+        <h2 class="text-center text-primary mb-3 text-2xl font-semibold">
+          上传音视频和OCR字幕，自动分配说话人
+        </h2>
+
+        <div class="bg-darker p-5 rounded-md mb-5">
+          <!-- 音视频文件上传/路径 -->
+          <div class="mb-4 p-3 border-b border-gray-700">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-gray-300 font-medium">音视频文件：</span>
+              <label class="cursor-pointer px-3 py-1 bg-primary/20 hover:bg-primary/30 rounded text-sm transition-colors">
+                <i class="fa fa-upload mr-1"></i>
+                上传文件
+                <input
+                  type="file"
+                  accept=".mp4,.avi,.mov,.mkv,.wav,.mp3,.flac,.aac,.m4a,.ogg"
+                  @change="handleVideoUpload"
+                  class="hidden"
+                />
+              </label>
+            </div>
+            <input
+              v-model="videoPath"
+              type="text"
+              placeholder="支持视频(.mp4/.avi/.mov/.mkv)和音频(.wav/.mp3/.flac/.aac/.m4a/.ogg)，如 C:\Users\Admin\Desktop\audio.wav"
+              class="bg-transparent outline-none text-sm w-full placeholder-gray-500 focus:border-purple-400 transition-all duration-200 border-b border-gray-600 pb-1"
+            />
+            <p class="text-xs text-gray-500 mt-1">
+              <i class="fa fa-info-circle text-primary mr-1"></i>
+              直接输入路径更快，无需上传文件
+            </p>
+            <div v-if="videoUploading" class="text-xs text-primary mt-2">
+              <i class="fa fa-spinner fa-spin mr-1"></i>
+              上传中...
+            </div>
+          </div>
+
+          <!-- SRT文件上传/路径 -->
+          <div class="mb-4 p-3 border-b border-gray-700">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-gray-300 font-medium">SRT字幕文件：</span>
+              <label class="cursor-pointer px-3 py-1 bg-primary/20 hover:bg-primary/30 rounded text-sm transition-colors">
+                <i class="fa fa-upload mr-1"></i>
+                上传字幕
+                <input
+                  type="file"
+                  accept=".srt"
+                  @change="handleSrtUpload"
+                  class="hidden"
+                />
+              </label>
+            </div>
+            <input
+              v-model="srtPath"
+              type="text"
+              placeholder="推荐：直接输入本地文件路径，如 C:\Users\Admin\Desktop\subtitle.srt"
+              class="bg-transparent outline-none text-sm w-full placeholder-gray-500 focus:border-purple-400 transition-all duration-200 border-b border-gray-600 pb-1"
+              @dragover.prevent
+              @drop.prevent="handleSrtDrop"
+            />
+            <p class="text-xs text-gray-500 mt-1">
+              <i class="fa fa-info-circle text-primary mr-1"></i>
+              直接输入路径更快，无需上传文件。也可以拖拽文件到输入框，然后手动输入路径
+            </p>
+            <div v-if="srtUploading" class="text-xs text-primary mt-2">
+              <i class="fa fa-spinner fa-spin mr-1"></i>
+              上传中...
+            </div>
+          </div>
+
+          <!-- 说话人数量 -->
+          <div class="flex items-center p-3 mt-1">
+            <span class="mr-2 text-gray-300 min-w-[120px]">说话人数量：</span>
+            <input
+              type="number"
+              v-model.number="speakerCount"
+              min="0"
+              placeholder="指定固定数量（可选）"
+              class="bg-darker border border-gray-600 rounded px-2 py-1 text-sm flex-1 max-w-[200px] focus:border-primary outline-none transition-colors"
+            />
+            <p class="text-sm text-gray-400 ml-3 flex items-center">
+              <i class="fa fa-info-circle text-primary mr-1.5"></i>
+              知道说话人数量时填写，提升识别准确率，0为自动检测
+            </p>
+          </div>
+
+          <!-- 说话人数量范围 -->
+          <div class="flex items-center p-3">
+            <span class="mr-2 text-gray-300 min-w-[120px]">数量范围：</span>
+            <div class="flex items-center gap-3 flex-1 max-w-[300px]">
+              <div class="flex-1">
+                <input
+                  type="number"
+                  v-model.number="speakerMin"
+                  min="0"
+                  placeholder="最小值"
+                  class="bg-darker border border-gray-600 rounded px-2 py-1 text-sm w-full focus:border-primary outline-none transition-colors"
+                />
+              </div>
+              <span class="text-gray-400">-</span>
+              <div class="flex-1">
+                <input
+                  type="number"
+                  v-model.number="speakerMax"
+                  :min="speakerMin"
+                  placeholder="最大值"
+                  class="bg-darker border border-gray-600 rounded px-2 py-1 text-sm w-full focus:border-primary outline-none transition-colors"
+                />
+              </div>
+            </div>
+            <p class="text-sm text-gray-400 ml-3 flex items-center">
+              <i class="fa fa-info-circle text-primary mr-1.5"></i>
+              知道数量范围时填写，提升识别准确率，0为自动检测
+            </p>
+          </div>
+
+          <!-- 开始处理按钮 -->
+          <div
+            v-if="!currentTask || currentTask.status !== 'running'"
+            class="flex gap-2 mt-4"
+          >
+            <button
+              @click="startTask"
+              class="w-full px-4 py-2 bg-primary text-white hover:bg-purple-500 rounded-md transition-colors"
+            >
+              开始处理
+            </button>
+          </div>
+
+          <!-- 进度展示区域 -->
+          <div
+            v-if="currentTask"
+            class="p-4 rounded-lg shadow-sm border border-gray-200 space-y-4 mt-4"
+          >
+            <div class="flex justify-between items-center">
+              <span class="font-medium">任务ID：{{ currentTask.task_id }}</span>
+              <span class="text-sm text-gray-500">
+                状态：{{ formatStatus(currentTask.status) }}
+              </span>
+            </div>
+
+            <!-- 进度条 -->
+            <div class="space-y-2">
+              <div class="flex justify-between text-sm">
+                <span>进度</span>
+                <span>{{ currentTask.progress }}%</span>
+              </div>
+              <div class="w-full h-4 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  class="h-full rounded-full transition-all duration-300 bg-purple-500"
+                  :style="{ width: currentTask.progress + '%' }"
+                ></div>
+              </div>
+            </div>
+
+            <!-- 时间信息 -->
+            <div class="text-sm text-gray-500">
+              <p>启动时间：{{ currentTask.start_time }}</p>
+              <p v-if="currentTask.end_time">
+                结束时间：{{ currentTask.end_time }}
+              </p>
+            </div>
+
+            <!-- 错误提示 -->
+            <div
+              v-if="currentTask.error"
+              class="text-red-500 text-sm bg-red-50 p-2 rounded"
+            >
+              错误信息：{{ currentTask.error }}
+            </div>
+          </div>
+        </div>
+
+        <!-- 结果展示区域 -->
+        <div v-if="resultReady" class="flex-1 flex flex-col gap-4 mt-6">
+          <h3 class="text-lg font-medium text-primary">处理结果</h3>
+
+          <!-- 说话人数量显示 -->
+          <div class="text-sm text-gray-300">
+            成功识别
+            <span class="text-primary font-semibold">{{ speakerCount || 0 }}</span>
+            个说话人
+          </div>
+
+          <!-- 最终文件夹显示 -->
+          <div v-if="finalFolder" class="flex items-center gap-2 text-sm mt-1">
+            <span class="text-gray-400">结果文件夹：</span>
+            <a
+              @click="openTargetFolder(finalFolder)"
+              class="text-primary hover:text-purple-400 cursor-pointer flex items-center gap-1"
+            >
+              {{ finalFolder }}
+              <i class="fa fa-folder-open-o"></i>
+            </a>
+          </div>
+
+          <!-- 说话人字幕列表 -->
+          <div v-if="speakerSrtFiles.length > 0" class="mt-4 space-y-4">
+            <div
+              v-for="(srtFile, idx) in speakerSrtFiles"
+              :key="idx"
+              class="bg-darker rounded-md p-4"
+            >
+              <div class="flex justify-between items-center mb-3">
+                <h4 class="font-medium text-gray-100">
+                  {{ getSpeakerName(srtFile) }}
+                </h4>
+                <a
+                  @click="openTargetFolder(getSrtFolder(srtFile))"
+                  class="text-primary hover:text-purple-400 text-sm"
+                >
+                  打开文件夹
+                  <i class="fa fa-folder-open-o ml-1"></i>
+                </a>
+              </div>
+              <div class="text-sm text-gray-400">
+                字幕文件：{{ getFileName(srtFile) }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 无结果提示 -->
+          <div
+            v-else-if="currentTask?.status === 'completed'"
+            class="text-sm text-gray-400 mt-4"
+          >
+            暂无说话人字幕数据
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const { createApp, ref, onUnmounted } = Vue;
+
+      createApp({
+        setup() {
+          const videoPath = ref("");
+          const srtPath = ref("");
+          const speakerCount = ref(0);
+          const speakerMin = ref(0);
+          const speakerMax = ref(0);
+          const currentTask = ref(null);
+          const pollTimer = ref(null);
+          const resultReady = ref(false);
+          const finalFolder = ref(null);
+          const speakerSrtFiles = ref([]);
+          const vocalCount = ref(0);
+          const videoUploading = ref(false);
+          const srtUploading = ref(false);
+
+          onUnmounted(() => {
+            if (pollTimer.value) clearInterval(pollTimer.value);
+          });
+
+          const handleVideoUpload = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            videoUploading.value = true;
+            const formData = new FormData();
+            formData.append("file", file);
+
+            try {
+              const res = await axios.post("/api/upload-video", formData, {
+                headers: { "Content-Type": "multipart/form-data" },
+              });
+              videoPath.value = res.data.save_path;
+              alert(`${res.data.message}：${res.data.filename}`);
+            } catch (err) {
+              alert(
+                `文件上传失败：${err.response?.data?.detail || err.message}`
+              );
+            } finally {
+              videoUploading.value = false;
+              event.target.value = "";
+            }
+          };
+
+          const handleSrtUpload = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            srtUploading.value = true;
+            const formData = new FormData();
+            formData.append("file", file);
+
+            try {
+              const res = await axios.post("/api/upload-srt", formData, {
+                headers: { "Content-Type": "multipart/form-data" },
+              });
+              srtPath.value = res.data.save_path;
+              alert(`字幕上传成功：${res.data.filename}`);
+            } catch (err) {
+              alert(
+                `字幕上传失败：${err.response?.data?.detail || err.message}`
+              );
+            } finally {
+              srtUploading.value = false;
+              event.target.value = "";
+            }
+          };
+
+          // 处理 SRT 文件拖拽
+          const handleSrtDrop = (event) => {
+            const file = event.dataTransfer.files[0];
+            if (!file) return;
+            
+            // 浏览器无法获取真实路径，提示用户手动输入
+            const fileName = file.name;
+            alert(`检测到文件：${fileName}\n\n由于浏览器安全限制，无法自动获取文件路径。\n请在输入框中手动输入该文件的完整路径，例如：\nC:\\Users\\Admin\\Desktop\\${fileName}`);
+            
+            // 聚焦到输入框
+            event.target.focus();
+          };
+
+          const goHome = () => {
+            window.location.href = "/static/index.html?tab=task1";
+          };
+
+          const goClearVoice = () => {
+            window.location.href = "/static/index.html?tab=task3";
+          };
+
+          const goMerge = () => {
+            window.location.href = "/static/tool_merge.html";
+          };
+
+          const goMp4ToWav = () => {
+            window.location.href = "/static/mp4_to_wav.html";
+          };
+
+          // 清理路径中的不可见 Unicode 字符
+          const cleanPath = (path) => {
+            if (!path) return path;
+            // 移除常见的不可见控制字符
+            return path
+              .replace(/[\u200B-\u200D\u202A-\u202E\uFEFF]/g, '') // 零宽字符和方向标记
+              .trim(); // 去除首尾空格
+          };
+
+          const startTask = async () => {
+            if (!videoPath.value || !srtPath.value) {
+              alert("请填写视频文件路径和SRT字幕路径");
+              return;
+            }
+
+            resultReady.value = false;
+            currentTask.value = null;
+
+            try {
+              const scriptArgs = [
+                `--video-path=${cleanPath(videoPath.value)}`,
+                `--srt-path=${cleanPath(srtPath.value)}`,
+              ];
+
+              if (!isNaN(speakerCount.value) && speakerCount.value > 0) {
+                scriptArgs.push(`--num-speakers=${speakerCount.value}`);
+              } else {
+                if (speakerMin.value > 0)
+                  scriptArgs.push(`--min-speakers=${speakerMin.value}`);
+                if (speakerMax.value > 0)
+                  scriptArgs.push(`--max-speakers=${speakerMax.value}`);
+              }
+
+              const res = await axios.post("/api/tasks", {
+                script_name: "ocr_srt_speaker_assignment.py",
+                script_args: scriptArgs,
+              });
+
+              currentTask.value = res.data;
+              startPolling(res.data.task_id);
+            } catch (err) {
+              alert(
+                `启动任务失败：${err.response?.data?.detail || err.message}`
+              );
+            }
+          };
+
+          const startPolling = (taskId) => {
+            if (pollTimer.value) clearInterval(pollTimer.value);
+
+            pollTimer.value = setInterval(async () => {
+              try {
+                const res = await axios.get(`/api/tasks/${taskId}`);
+                currentTask.value = res.data;
+
+                // 提取结果
+                speakerSrtFiles.value = extractSpeakerSrtFiles(res.data.output);
+                finalFolder.value = extractFinalFolder(res.data.output);
+                vocalCount.value = extractVocalCount(res.data.output);
+
+                if (["completed", "failed"].includes(res.data.status)) {
+                  resultReady.value = res.data.status === "completed";
+                  clearInterval(pollTimer.value);
+                  pollTimer.value = null;
+                }
+              } catch (err) {
+                clearInterval(pollTimer.value);
+                pollTimer.value = null;
+                alert(
+                  `获取进度失败：${err.response?.data?.detail || err.message}`
+                );
+              }
+            }, 2000);
+          };
+
+          const formatStatus = (status) => {
+            const map = {
+              running: "运行中",
+              completed: "已完成",
+              failed: "已失败",
+            };
+            return map[status] || status;
+          };
+
+          const extractVocalCount = (output) => {
+            if (!output || typeof output !== "string") return 0;
+            const countMatch = output.match(/count_role\s*：\s*(\d+)/i);
+            return countMatch ? parseInt(countMatch[1]) : 0;
+          };
+
+          const extractFinalFolder = (output) => {
+            if (!output || typeof output !== "string") return null;
+            const match = output.match(/result_root\s*：\s*(.*)/i);
+            return match ? match[1].trim() : null;
+          };
+
+          const extractSpeakerSrtFiles = (output) => {
+            const MARK = "result_speaker_srt：";
+            if (!output || typeof output !== "string") return [];
+
+            const outputLines = output.split(/\r?\n/);
+            const targetLines = outputLines
+              .map((line) => line.trim())
+              .filter((line) => line.startsWith(MARK));
+
+            const validPaths = [];
+            targetLines.forEach((line) => {
+              const pathPart = line.split(MARK)[1];
+              if (pathPart) {
+                const trimmedPath = pathPart.trim();
+                if (trimmedPath) {
+                  validPaths.push(trimmedPath.replace(/\\/g, "/"));
+                }
+              }
+            });
+
+            return validPaths;
+          };
+
+          const getSpeakerName = (srtFile) => {
+            const fileName = srtFile.split("/").pop();
+            const match = fileName.match(/^(spk\d+|UNKNOWN)/);
+            return match ? match[1] : "未知说话人";
+          };
+
+          const getFileName = (srtFile) => {
+            return srtFile.split("/").pop();
+          };
+
+          const getSrtFolder = (srtFile) => {
+            const parts = srtFile.split("/");
+            parts.pop();
+            return parts.join("/");
+          };
+
+          const openTargetFolder = async (folder_path) => {
+            try {
+              await axios.post(
+                "/api/open-folder",
+                { folder_path },
+                { headers: { "Content-Type": "application/json" } }
+              );
+            } catch (err) {
+              console.error("打开文件夹失败：", err);
+            }
+          };
+
+          return {
+            videoPath,
+            srtPath,
+            speakerCount,
+            speakerMin,
+            speakerMax,
+            currentTask,
+            resultReady,
+            finalFolder,
+            speakerSrtFiles,
+            vocalCount,
+            videoUploading,
+            srtUploading,
+            handleVideoUpload,
+            handleSrtUpload,
+            handleSrtDrop,
+            goHome,
+            goClearVoice,
+            goMerge,
+            goMp4ToWav,
+            startTask,
+            formatStatus,
+            getSpeakerName,
+            getFileName,
+            getSrtFolder,
+            openTargetFolder,
+          };
+        },
+      }).mount("#app");
+    </script>
+  </body>
+</html>

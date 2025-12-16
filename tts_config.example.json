@@ -1,0 +1,17 @@
+{
+  "gptSovits": {
+    "enabled": false,
+    "apiUrl": "http://127.0.0.1:9880",
+    "roles": []
+  },
+  "qwenTts": {
+    "enabled": true,
+    "apiKey": "sk-bbeeb95773cf4dfc95197f45c7f350ea",
+    "roles": [
+      {
+        "name": "sp01",
+        "voice": "longxiaochun"
+      }
+    ]
+  }
+}
