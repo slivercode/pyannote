@@ -1,0 +1,8 @@
+1
+00:00:00,000 --> 00:00:00,000
+I'm happy to help, but I don't see an image or audio file attached to your message. Could you please provide the actual audio file or a text representation of it?
+
+If you provide the text transcription, I can assist you in converting it into JSON format with the 'text' and 'segments' fields as requested.
+
+Please paste the transcription text, and I'll be happy to help!
+

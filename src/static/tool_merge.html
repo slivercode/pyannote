@@ -48,28 +48,32 @@
       <div class="flex gap-5 border-b-2 border-primary mb-5">
         <div
           class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
-          :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task1' }"
-           @click="go()"
+          @click="goMp4ToWav()"
         >
-          长音频或批量（无多人声重叠）
+          MP4转WAV
         </div>
         <div
           class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
-          :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task2' }"
+          @click="goClearVoice()"
         >
-          工具-音(视)频合并
+          ClearVoice语音增强
         </div>
-        <!-- 新增：帮助按钮（靠右显示，使用flex-grow推到右侧） -->
-        <div class="flex-grow flex justify-end">
-          <a
-            href="https://www.yuque.com/choui/cah18i/tv4wgxsx3kua7ufb?singleDoc# 《软件安装》"
-            target="_blank"
-            class="flex items-center gap-1 px-3 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-            title="查看帮助文档"
-          >
-            <i class="fa fa-question-circle"></i>
-            <span class="text-sm">帮助</span>
-          </a>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goOcrSrt()"
+        >
+          OCR字幕说话人分配
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="go()"
+        >
+          长音频批量
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-primary border-b-2 border-primary"
+        >
+          音视频合并
         </div>
       </div>
 
@@ -481,8 +485,19 @@
           };
 
           const go = () => {
-            //alert("g");
-            window.location.href = "/static/index.html";
+            window.location.href = "/static/index.html?tab=task1";
+          };
+
+          const goClearVoice = () => {
+            window.location.href = "/static/index.html?tab=task3";
+          };
+
+          const goOcrSrt = () => {
+            window.location.href = "/static/ocr_srt_speaker.html";
+          };
+
+          const goMp4ToWav = () => {
+            window.location.href = "/static/mp4_to_wav.html";
           };
 
           // 新增3：从后台output日志中提取合并音频
@@ -555,6 +570,9 @@
             activeTab,
             errorMessage,
             go,
+            goClearVoice,
+            goOcrSrt,
+            goMp4ToWav,
             startTask,
             originalFile,
             mergeFolder,

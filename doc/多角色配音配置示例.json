@@ -1,0 +1,229 @@
+{
+  "description": "多角色配音配置示例 - 为每个角色设置独立的语速和参考音频",
+  "config_format": "将此配置转换为Python字典后传入TTSDubbingProcessor的role_data参数",
+  
+  "example_1_three_speakers": {
+    "description": "三角色对话场景",
+    "SPEAKER_00": {
+      "refAudioPath": "d:/audio/references/host.wav",
+      "promptText": "欢迎收听今天的节目",
+      "promptLang": "zh",
+      "speed_factor": 1.0,
+      "text_lang": "zh",
+      "note": "主持人 - 正常语速，稳重"
+    },
+    "SPEAKER_01": {
+      "refAudioPath": "d:/audio/references/guest_male.wav",
+      "promptText": "很高兴来到这里",
+      "promptLang": "zh",
+      "speed_factor": 0.9,
+      "text_lang": "zh",
+      "note": "男嘉宾 - 稍慢，沉稳"
+    },
+    "SPEAKER_02": {
+      "refAudioPath": "d:/audio/references/guest_female.wav",
+      "promptText": "大家好，我是小李",
+      "promptLang": "zh",
+      "speed_factor": 1.1,
+      "text_lang": "zh",
+      "note": "女嘉宾 - 稍快，活泼"
+    },
+    "default": {
+      "refAudioPath": "d:/audio/references/default.wav",
+      "promptText": "这是默认参考文本",
+      "promptLang": "zh",
+      "speed_factor": 1.0,
+      "text_lang": "zh",
+      "note": "默认配置 - 用于未识别的说话人"
+    }
+  },
+  
+  "example_2_drama": {
+    "description": "戏剧场景 - 不同年龄和性格的角色",
+    "SPEAKER_00": {
+      "refAudioPath": "d:/audio/drama/old_man.wav",
+      "promptText": "孩子，听我说",
+      "promptLang": "zh",
+      "speed_factor": 0.75,
+      "text_lang": "zh",
+      "note": "老年男性 - 慢速，沧桑"
+    },
+    "SPEAKER_01": {
+      "refAudioPath": "d:/audio/drama/young_man.wav",
+      "promptText": "我明白了，爷爷",
+      "promptLang": "zh",
+      "speed_factor": 1.0,
+      "text_lang": "zh",
+      "note": "青年男性 - 正常语速"
+    },
+    "SPEAKER_02": {
+      "refAudioPath": "d:/audio/drama/child.wav",
+      "promptText": "爸爸，我想要这个",
+      "promptLang": "zh",
+      "speed_factor": 1.3,
+      "text_lang": "zh",
+      "note": "儿童 - 快速，活泼"
+    },
+    "SPEAKER_03": {
+      "refAudioPath": "d:/audio/drama/narrator.wav",
+      "promptText": "故事发生在一个秋天的下午",
+      "promptLang": "zh",
+      "speed_factor": 0.95,
+      "text_lang": "zh",
+      "note": "旁白 - 稍慢，清晰"
+    }
+  },
+  
+  "example_3_multilingual": {
+    "description": "多语言场景 - 不同语言的角色",
+    "SPEAKER_00": {
+      "refAudioPath": "d:/audio/multilang/chinese.wav",
+      "promptText": "你好，很高兴见到你",
+      "promptLang": "zh",
+      "speed_factor": 1.0,
+      "text_lang": "zh",
+      "note": "中文角色"
+    },
+    "SPEAKER_01": {
+      "refAudioPath": "d:/audio/multilang/english.wav",
+      "promptText": "Hello, nice to meet you",
+      "promptLang": "en",
+      "speed_factor": 1.0,
+      "text_lang": "en",
+      "note": "英文角色"
+    },
+    "SPEAKER_02": {
+      "refAudioPath": "d:/audio/multilang/japanese.wav",
+      "promptText": "こんにちは",
+      "promptLang": "ja",
+      "speed_factor": 1.0,
+      "text_lang": "ja",
+      "note": "日文角色"
+    }
+  },
+  
+  "example_4_emotion_based": {
+    "description": "基于情绪的语速控制",
+    "SPEAKER_00": {
+      "refAudioPath": "d:/audio/emotion/calm.wav",
+      "promptText": "让我们冷静下来",
+      "promptLang": "zh",
+      "speed_factor": 0.85,
+      "text_lang": "zh",
+      "note": "平静状态 - 慢速"
+    },
+    "SPEAKER_01": {
+      "refAudioPath": "d:/audio/emotion/excited.wav",
+      "promptText": "太棒了！我们成功了！",
+      "promptLang": "zh",
+      "speed_factor": 1.3,
+      "text_lang": "zh",
+      "note": "兴奋状态 - 快速"
+    },
+    "SPEAKER_02": {
+      "refAudioPath": "d:/audio/emotion/nervous.wav",
+      "promptText": "怎么办，我很紧张",
+      "promptLang": "zh",
+      "speed_factor": 1.2,
+      "text_lang": "zh",
+      "note": "紧张状态 - 较快"
+    },
+    "SPEAKER_03": {
+      "refAudioPath": "d:/audio/emotion/sad.wav",
+      "promptText": "我感到很难过",
+      "promptLang": "zh",
+      "speed_factor": 0.8,
+      "text_lang": "zh",
+      "note": "悲伤状态 - 慢速"
+    }
+  },
+  
+  "speed_factor_guide": {
+    "description": "语速系数参考指南",
+    "ranges": {
+      "0.5-0.7": "非常慢 - 适合老年角色、沉思场景",
+      "0.7-0.9": "较慢 - 适合稳重角色、解说旁白",
+      "0.9-1.1": "正常 - 适合大多数成年角色",
+      "1.1-1.3": "较快 - 适合青少年、活泼角色",
+      "1.3-1.5": "快速 - 适合儿童、激动场景",
+      "1.5-2.0": "非常快 - 适合特殊效果、紧急场景"
+    },
+    "recommendations": {
+      "老年男性": 0.75,
+      "老年女性": 0.8,
+      "成年男性": 1.0,
+      "成年女性": 1.0,
+      "青年男性": 1.1,
+      "青年女性": 1.1,
+      "少年": 1.2,
+      "儿童": 1.3,
+      "旁白解说": 0.95,
+      "新闻播报": 1.0,
+      "广告配音": 1.1
+    }
+  },
+  
+  "usage_python": {
+    "description": "Python代码使用示例",
+    "code": [
+      "import json",
+      "from scripts.tts_dubbing_processor import TTSDubbingProcessor",
+      "",
+      "# 加载配置文件",
+      "with open('多角色配音配置示例.json', 'r', encoding='utf-8') as f:",
+      "    config = json.load(f)",
+      "",
+      "# 选择一个示例配置",
+      "role_data = config['example_1_three_speakers']",
+      "# 移除description和note字段",
+      "role_data = {k: {kk: vv for kk, vv in v.items() if kk not in ['note', 'description']} ",
+      "             for k, v in role_data.items() if k != 'description'}",
+      "",
+      "# 创建处理器",
+      "processor = TTSDubbingProcessor(",
+      "    srt_path='input_with_speakers.srt',",
+      "    output_dir='output',",
+      "    engine='gpt-sovits',",
+      "    role_data=role_data,",
+      "    api_url='http://localhost:9880',",
+      "    auto_align=True,",
+      ")",
+      "",
+      "# 执行配音",
+      "result = processor.process()",
+      "print(f'配音完成: {result}')"
+    ]
+  },
+  
+  "srt_format_example": {
+    "description": "对应的SRT字幕格式示例",
+    "content": [
+      "1",
+      "00:00:00,000 --> 00:00:02,500",
+      "[SPEAKER_00] 欢迎收听今天的节目",
+      "",
+      "2",
+      "00:00:02,500 --> 00:00:05,000",
+      "[SPEAKER_01] 很高兴来到这里",
+      "",
+      "3",
+      "00:00:05,000 --> 00:00:07,500",
+      "[SPEAKER_02] 大家好，我是小李",
+      "",
+      "4",
+      "00:00:07,500 --> 00:00:10,000",
+      "[SPEAKER_00] 那我们开始今天的讨论吧"
+    ]
+  },
+  
+  "tips": {
+    "tip_1": "参考音频(refAudioPath)应该是清晰、无噪音的音频文件",
+    "tip_2": "promptText应该与参考音频的内容一致",
+    "tip_3": "promptLang和text_lang应该匹配实际语言",
+    "tip_4": "speed_factor建议在0.5-2.0之间，超出范围可能影响音质",
+    "tip_5": "为每个角色准备3-10秒的参考音频效果最佳",
+    "tip_6": "可以为同一个说话人在不同情绪下创建不同的配置",
+    "tip_7": "建议先用小样本测试语速效果，再批量处理",
+    "tip_8": "default配置是必需的，用于处理未识别的说话人"
+  }
+}

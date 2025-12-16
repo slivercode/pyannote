@@ -56,22 +56,23 @@ def get_audio_info(input_path):
             if re.search(r"(\d+) Hz", audio_desc)
             else None
         )
-        audio_info["bit_depth"] = 16 if re.search(r"s16", audio_desc) else None
-        # 修复bit_depth提取：如果无法识别，默认16位
-    if re.search(r"s16", audio_desc):
-        audio_info["bit_depth"] = 16
-    elif re.search(r"s24", audio_desc):
-        audio_info["bit_depth"] = 24
-    elif re.search(r"s32", audio_desc):
-        audio_info["bit_depth"] = 32
-    else:
-        audio_info["bit_depth"] = 16  # 默认16位，避免None
+        if re.search(r"s16", audio_desc):
+            audio_info["bit_depth"] = 16
+        elif re.search(r"s24", audio_desc):
+            audio_info["bit_depth"] = 24
+        elif re.search(r"s32", audio_desc):
+            audio_info["bit_depth"] = 32
+        else:
+            audio_info["bit_depth"] = 16  # 默认16位，避免None
     return audio_info
 
 
 def convert_to_wav(input_path, output_dir):
-    # 转绝对路径
+    # 转绝对路径（先规范化路径格式）
+    # 修复：Windows 下小写盘符路径问题（e:/xx.wav -> E:/xx.wav）
+    input_path = os.path.normpath(input_path)  # 规范化路径分隔符
     input_path = os.path.abspath(input_path).replace(os.sep, "/")
+    output_dir = os.path.normpath(output_dir)
     output_dir = os.path.abspath(output_dir).replace(os.sep, "/")
     os.makedirs(output_dir, exist_ok=True)
 

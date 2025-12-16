@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS测试页面</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .container {
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 10px;
+        }
+        input, button {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #444;
+            background: #333;
+            color: #fff;
+        }
+        button {
+            background: #7c3aed;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #6d28d9;
+        }
+        .log {
+            background: #1a1a1a;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .success { color: #10b981; }
+        .error { color: #ef4444; }
+        .info { color: #3b82f6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 GPT-SoVITS TTS 测试</h1>
+        
+        <div>
+            <label>API地址:</label>
+            <input type="text" id="apiUrl" value="http://192.168.110.204:9880/tts">
+        </div>
+        
+        <div>
+            <label>参考音频路径:</label>
+            <input type="text" id="refAudioPath" value="cs3.mp3" placeholder="cs3.mp3">
+        </div>
+        
+        <div>
+            <label>参考文本:</label>
+            <input type="text" id="promptText" value="何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ">
+        </div>
+        
+        <div>
+            <label>参考语言:</label>
+            <select id="promptLang" style="width: 100%; padding: 10px; margin: 10px 0; border-radius: 5px; border: 1px solid #444; background: #333; color: #fff;">
+                <option value="zh">中文</option>
+                <option value="en">英文</option>
+                <option value="ja" selected>日文</option>
+            </select>
+        </div>
+        
+        <div>
+            <label>测试文本:</label>
+            <input type="text" id="testText" value="你好，这是测试文本">
+        </div>
+        
+        <button onclick="testTTS()">🚀 开始测试</button>
+        
+        <div class="log" id="log"></div>
+        
+        <audio id="audioPlayer" controls style="width: 100%; margin-top: 20px; display: none;"></audio>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'success' ? 'success' : type === 'error' ? 'error' : 'info';
+            logDiv.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function testTTS() {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML = '';
+            
+            const apiUrl = document.getElementById('apiUrl').value;
+            const refAudioPath = document.getElementById('refAudioPath').value;
+            const promptText = document.getElementById('promptText').value;
+            const promptLang = document.getElementById('promptLang').value;
+            const testText = document.getElementById('testText').value;
+
+            log('📋 测试参数:', 'info');
+            log(`  API地址: ${apiUrl}`, 'info');
+            log(`  参考音频: ${refAudioPath}`, 'info');
+            log(`  参考文本: ${promptText}`, 'info');
+            log(`  参考语言: ${promptLang}`, 'info');
+            log(`  测试文本: ${testText}`, 'info');
+            log('', 'info');
+
+            const params = {
+                text: testText,
+                text_lang: 'zh',
+                ref_audio_path: refAudioPath,
+                prompt_text: promptText,
+                prompt_lang: promptLang,
+                speed_factor: 1.0
+            };
+
+            log('🔄 发送请求...', 'info');
+            
+            try {
+                const response = await axios.get(apiUrl, {
+                    params: params,
+                    responseType: 'blob',
+                    timeout: 30000
+                });
+
+                log('✅ 请求成功!', 'success');
+                log(`  状态码: ${response.status}`, 'success');
+                log(`  Content-Type: ${response.headers['content-type']}`, 'success');
+                log(`  数据大小: ${response.data.size} 字节`, 'success');
+                log('', 'info');
+
+                const contentType = response.headers['content-type'];
+                
+                if (contentType && contentType.includes('audio')) {
+                    log('🎵 检测到音频数据，创建播放器...', 'success');
+                    
+                    const audioBlob = new Blob([response.data], { type: 'audio/wav' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    
+                    const audioPlayer = document.getElementById('audioPlayer');
+                    audioPlayer.src = audioUrl;
+                    audioPlayer.style.display = 'block';
+                    
+                    log('▶️ 开始播放...', 'success');
+                    audioPlayer.play().then(() => {
+                        log('✅ 播放成功!', 'success');
+                    }).catch(err => {
+                        log(`❌ 播放失败: ${err.message}`, 'error');
+                    });
+                } else {
+                    log(`⚠️ 返回的不是音频文件`, 'error');
+                    log(`  Content-Type: ${contentType}`, 'error');
+                    
+                    // 尝试读取文本内容
+                    try {
+                        const text = await response.data.text();
+                        log(`  返回内容: ${text.substring(0, 200)}`, 'error');
+                    } catch (e) {
+                        log(`  无法读取返回内容`, 'error');
+                    }
+                }
+
+            } catch (err) {
+                log('❌ 请求失败!', 'error');
+                log(`  错误类型: ${err.name}`, 'error');
+                log(`  错误信息: ${err.message}`, 'error');
+                
+                if (err.response) {
+                    log(`  响应状态: ${err.response.status}`, 'error');
+                    log(`  响应状态文本: ${err.response.statusText}`, 'error');
+                    
+                    try {
+                        if (err.response.data instanceof Blob) {
+                            const text = await err.response.data.text();
+                            log(`  错误详情: ${text}`, 'error');
+                        } else {
+                            log(`  错误详情: ${JSON.stringify(err.response.data)}`, 'error');
+                        }
+                    } catch (e) {
+                        log(`  无法解析错误详情`, 'error');
+                    }
+                } else if (err.request) {
+                    log('  请求已发送但未收到响应', 'error');
+                    log('  可能原因: 服务器未启动、网络问题、CORS问题', 'error');
+                } else {
+                    log(`  请求配置错误: ${err.message}`, 'error');
+                }
+                
+                console.error('完整错误对象:', err);
+            }
+        }
+
+        // 页面加载完成后的提示
+        window.onload = function() {
+            log('✅ 测试页面已加载', 'success');
+            log('📝 请检查配置后点击"开始测试"按钮', 'info');
+            log('', 'info');
+        };
+    </script>
+</body>
+</html>

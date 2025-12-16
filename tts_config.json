@@ -1,0 +1,97 @@
+{
+  "gptSovits": {
+    "enabled": true,
+    "apiUrl": "http://192.168.110.204:9880",
+    "roles": [
+      {
+        "name": "spk01",
+        "refAudioPath": "cs3.mp3",
+        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
+        "promptLang": "ja",
+        "speedFactor": 1,
+        "testStatus": "success",
+        "testMessage": "✅ 测试成功！点击播放按钮试听",
+        "testAudioUrl": "blob:http://127.0.0.1:8514/76b275bd-ad4c-4e6a-8eab-4ca9ce11d8fb"
+      },
+      {
+        "name": "spk02",
+        "refAudioPath": "cs12.mp3",
+        "promptText": "今夜の月、すごく綺麗だね。こんなに明るいのって、なんか特別な気がする",
+        "promptLang": "ja",
+        "speedFactor": 0.8,
+        "testStatus": "success",
+        "testMessage": "✅ 测试成功！点击播放按钮试听",
+        "testAudioUrl": "blob:http://127.0.0.1:8514/d99f01aa-707c-4916-ab08-c8d2669db528"
+      },
+      {
+        "name": "spk03",
+        "refAudioPath": "cs3.mp3",
+        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
+        "promptLang": "ja",
+        "speedFactor": 1
+      },
+      {
+        "name": "spk04",
+        "refAudioPath": "cs4.mp3",
+        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
+        "promptLang": "ja",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
+      },
+      {
+        "name": "spk05",
+        "refAudioPath": "cs5.mp3",
+        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
+        "promptLang": "ja",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
+      },
+      {
+        "name": "spk06",
+        "refAudioPath": "cs6.mp3",
+        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
+        "promptLang": "ja",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
+      },
+      {
+        "name": "spk07",
+        "refAudioPath": "cs7.mp3",
+        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
+        "promptLang": "ja",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
+      }
+    ]
+  },
+  "qwenTts": {
+    "enabled": true,
+    "apiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "roles": [
+      {
+        "name": "龙小春（女声）",
+        "voice": "longxiaochun"
+      },
+      {
+        "name": "龙小夏（女声）",
+        "voice": "longxiaoxia"
+      },
+      {
+        "name": "龙小秋（男声）",
+        "voice": "longxiaoqiu"
+      },
+      {
+        "name": "龙小冬（男声）",
+        "voice": "longxiaodong"
+      }
+    ]
+  }
+}
