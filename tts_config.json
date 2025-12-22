@@ -21,76 +21,64 @@
         "speedFactor": 0.8,
         "testStatus": "success",
         "testMessage": "✅ 测试成功！点击播放按钮试听",
-        "testAudioUrl": "blob:http://127.0.0.1:8514/d99f01aa-707c-4916-ab08-c8d2669db528"
+        "testAudioUrl": "blob:http://127.0.0.1:8515/b7226f94-65ee-4f56-b2c2-30ca86a7e43f"
       },
       {
         "name": "spk03",
-        "refAudioPath": "cs3.mp3",
-        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
-        "promptLang": "ja",
-        "speedFactor": 1
-      },
-      {
-        "name": "spk04",
-        "refAudioPath": "cs4.mp3",
-        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
+        "refAudioPath": "cs13.mp3",
+        "promptText": "今夜の月、すごく綺麗だね。",
         "promptLang": "ja",
         "speedFactor": 1,
-        "testStatus": null,
-        "testMessage": "",
-        "testAudioUrl": null
-      },
-      {
-        "name": "spk05",
-        "refAudioPath": "cs5.mp3",
-        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
-        "promptLang": "ja",
-        "speedFactor": 1,
-        "testStatus": null,
-        "testMessage": "",
-        "testAudioUrl": null
-      },
-      {
-        "name": "spk06",
-        "refAudioPath": "cs6.mp3",
-        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
-        "promptLang": "ja",
-        "speedFactor": 1,
-        "testStatus": null,
-        "testMessage": "",
-        "testAudioUrl": null
-      },
-      {
-        "name": "spk07",
-        "refAudioPath": "cs7.mp3",
-        "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
-        "promptLang": "ja",
-        "speedFactor": 1,
-        "testStatus": null,
-        "testMessage": "",
-        "testAudioUrl": null
+        "testStatus": "success",
+        "testMessage": "✅ 测试成功！点击播放按钮试听",
+        "testAudioUrl": "blob:http://127.0.0.1:8515/875b69c0-0dc2-469d-886e-6a2209de5b7f"
       }
     ]
   },
   "qwenTts": {
     "enabled": true,
-    "apiKey": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "apiKey": "sk-67f587a8e4564f6ea15c57e78a2a1652",
+    "defaultModel": "sambert-zhichu-v1",
     "roles": [
       {
-        "name": "龙小春（女声）",
-        "voice": "longxiaochun"
+        "name": "spk01",
+        "voice": "default",
+        "model": "sambert-zhichu-v1",
+        "language": "zh",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
       },
       {
-        "name": "龙小夏（女声）",
-        "voice": "longxiaoxia"
+        "name": "spk02",
+        "voice": "default",
+        "model": "sambert-zhichu-v1",
+        "language": "zh",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
       },
       {
-        "name": "龙小秋（男声）",
-        "voice": "longxiaoqiu"
+        "name": "japanese_speaker",
+        "voice": "default",
+        "model": "sambert-zhiying-v1",
+        "language": "ja",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
       },
       {
-        "name": "龙小冬（男声）",
-        "voice": "longxiaodong"
+        "name": "default",
+        "voice": "default",
+        "model": "sambert-zhichu-v1",
+        "language": "zh",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
       }
     ]
   }

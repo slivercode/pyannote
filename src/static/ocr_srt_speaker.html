@@ -188,6 +188,25 @@
             </p>
           </div>
 
+          <!-- 强制使用CPU开关 -->
+          <div class="flex items-center p-3 bg-darker/50 rounded border border-gray-700">
+            <span class="mr-2 text-gray-300">强制使用CPU运行</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                class="sr-only peer"
+                v-model="forceCpu"
+              />
+              <div
+                class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"
+              ></div>
+            </label>
+            <p class="text-sm text-gray-400 ml-3 flex items-center">
+              <i class="fa fa-info-circle text-primary mr-1.5"></i>
+              开启后将使用CPU进行推理，适用于无GPU或GPU显存不足的情况（速度较慢）
+            </p>
+          </div>
+
           <!-- 开始处理按钮 -->
           <div
             v-if="!currentTask || currentTask.status !== 'running'"
@@ -322,6 +341,7 @@
           const vocalCount = ref(0);
           const videoUploading = ref(false);
           const srtUploading = ref(false);
+          const forceCpu = ref(false);
 
           onUnmounted(() => {
             if (pollTimer.value) clearInterval(pollTimer.value);
@@ -435,6 +455,11 @@
                   scriptArgs.push(`--min-speakers=${speakerMin.value}`);
                 if (speakerMax.value > 0)
                   scriptArgs.push(`--max-speakers=${speakerMax.value}`);
+              }
+
+              // 添加强制CPU参数
+              if (forceCpu.value) {
+                scriptArgs.push(`--force-cpu`);
               }
 
               const res = await axios.post("/api/tasks", {
@@ -564,6 +589,7 @@
             vocalCount,
             videoUploading,
             srtUploading,
+            forceCpu,
             handleVideoUpload,
             handleSrtUpload,
             handleSrtDrop,

@@ -179,7 +179,7 @@ class TTSDubbingProcessor:
         total_ms = int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(ms)
         return total_ms
     
-    def synthesize_speech(self, text, index, speaker=None):
+    def synthesize_speech(self, text, index, speaker=None, target_duration_ms=None):
         """
         调用TTS API合成语音
         
@@ -187,6 +187,7 @@ class TTSDubbingProcessor:
             text: 要合成的文本
             index: 字幕索引
             speaker: 说话人标识（可选）
+            target_duration_ms: 目标时长（毫秒），如果提供则自动调整语速
             
         Returns:
             音频文件路径
@@ -195,17 +196,17 @@ class TTSDubbingProcessor:
         
         try:
             if self.engine == 'gpt-sovits':
-                return self._synthesize_gpt_sovits(text, output_path, speaker)
+                return self._synthesize_gpt_sovits(text, output_path, speaker, target_duration_ms)
             elif self.engine == 'qwen-tts':
-                return self._synthesize_qwen_tts(text, output_path, speaker)
+                return self._synthesize_qwen_tts(text, output_path, speaker, target_duration_ms)
             else:
                 raise ValueError(f"不支持的TTS引擎: {self.engine}")
         except Exception as e:
             print(f"❌ 合成语音失败 (字幕{index}): {e}")
             raise
     
-    def _synthesize_gpt_sovits(self, text, output_path, speaker=None):
-        """使用GPT-SoVITS合成语音（支持多角色）"""
+    def _synthesize_gpt_sovits(self, text, output_path, speaker=None, target_duration_ms=None):
+        """使用GPT-SoVITS合成语音（支持多角色和自动语速调整）"""
         # 确保API地址正确
         api_url = self.api_url
         if not api_url.endswith('/tts'):
@@ -227,20 +228,78 @@ class TTSDubbingProcessor:
         # 获取该角色的语速系数（优先使用角色配置，否则使用全局配置）
         role_speed_factor = role_config.get('speed_factor', self.speed_factor)
         
+        # 如果提供了目标时长，先用标准语速生成一次，测量实际时长，然后计算需要的语速
+        if target_duration_ms and self.auto_align:
+            # 第一次：用标准语速生成，测量时长
+            temp_output = self.temp_dir / f"temp_{output_path.name}"
+            
+            # 获取目标语言
+            target_lang_test = role_config.get('text_lang', self.text_lang)
+            
+            params_test = {
+                'text': text,
+                'text_lang': target_lang_test,
+                'ref_audio_path': role_config.get('refAudioPath', ''),
+                'prompt_text': role_config.get('promptText', ''),
+                'prompt_lang': role_config.get('promptLang', target_lang_test),  # 使用目标语言作为默认值
+                'speed_factor': 1.0  # 先用标准语速测试
+            }
+            
+            response_test = requests.get(api_url, params=params_test, timeout=60)
+            response_test.raise_for_status()
+            
+            with open(temp_output, 'wb') as f:
+                f.write(response_test.content)
+            
+            # 测量实际时长
+            audio_test = AudioSegment.from_file(str(temp_output))
+            actual_duration_ms = len(audio_test)
+            
+            # 计算需要的语速（限制在合理范围内）
+            required_speed = actual_duration_ms / target_duration_ms
+            
+            # 限制语速范围（0.5x - 2.0x）
+            required_speed = max(0.5, min(2.0, required_speed))
+            
+            tts_speed_factor = required_speed
+            
+            print(f"  📊 测试时长: {actual_duration_ms}ms, 目标: {target_duration_ms}ms, 计算语速: {required_speed:.2f}x")
+            
+            # 清理临时文件
+            try:
+                os.unlink(temp_output)
+            except:
+                pass
+        else:
+            # 直接使用设定的语速
+            tts_speed_factor = role_speed_factor
+        
+        # 获取目标语言
+        target_lang = role_config.get('text_lang', self.text_lang)
+        
+        # 智能获取参考文本语言
+        # 优先使用配置中的promptLang，如果没有则使用目标语言
+        prompt_lang = role_config.get('promptLang', target_lang)
+        
         # 构建请求参数
         params = {
             'text': text,
-            'text_lang': role_config.get('text_lang', self.text_lang),
+            'text_lang': target_lang,
             'ref_audio_path': role_config.get('refAudioPath', ''),
             'prompt_text': role_config.get('promptText', ''),
-            'prompt_lang': role_config.get('promptLang', 'zh'),
-            'speed_factor': role_speed_factor  # 使用角色特定的语速
+            'prompt_lang': prompt_lang,  # 使用智能获取的语言
+            'speed_factor': tts_speed_factor  # 使用计算后的语速
         }
         
         if speaker:
-            print(f"🔄 调用GPT-SoVITS API [{speaker}, 语速={role_speed_factor}]: {text[:30]}...")
+            print(f"🔄 调用GPT-SoVITS API [{speaker}, 语速={tts_speed_factor:.2f}x]: {text[:30]}...")
         else:
-            print(f"🔄 调用GPT-SoVITS API [语速={role_speed_factor}]: {text[:30]}...")
+            print(f"🔄 调用GPT-SoVITS API [语速={tts_speed_factor:.2f}x]: {text[:30]}...")
+        
+        # 输出详细参数（用于诊断）
+        print(f"   目标语言: {target_lang}")
+        print(f"   参考文本: {params['prompt_text'][:30]}...")
+        print(f"   参考语言: {prompt_lang}")  # 重点：检查这个是否正确
         
         # 发送请求
         response = requests.get(api_url, params=params, timeout=60)
@@ -250,13 +309,135 @@ class TTSDubbingProcessor:
         with open(output_path, 'wb') as f:
             f.write(response.content)
         
-        print(f"✅ 语音合成成功: {output_path.name}")
+        # 验证最终时长
+        if target_duration_ms:
+            audio_final = AudioSegment.from_file(str(output_path))
+            final_duration = len(audio_final)
+            print(f"✅ 语音合成成功: {output_path.name}, 时长: {final_duration}ms (目标: {target_duration_ms}ms)")
+        else:
+            print(f"✅ 语音合成成功: {output_path.name}")
+        
         return str(output_path)
     
     def _synthesize_qwen_tts(self, text, output_path, speaker=None):
-        """使用QwenTTS合成语音"""
-        # TODO: 实现QwenTTS API调用
-        raise NotImplementedError("QwenTTS暂未实现")
+        """使用QwenTTS合成语音（支持多角色）"""
+        import dashscope
+        from dashscope.audio.tts import SpeechSynthesizer
+        
+        # 设置API密钥
+        dashscope.api_key = self.api_key
+        
+        # 根据说话人选择角色配置
+        if speaker and isinstance(self.role_data, dict) and speaker in self.role_data:
+            # 多角色模式：从role_data中获取对应角色的配置
+            role_config = self.role_data[speaker]
+            print(f"🎭 使用角色配置: {speaker}")
+        elif isinstance(self.role_data, dict) and 'voice' in self.role_data:
+            # 单角色模式：直接使用role_data
+            role_config = self.role_data
+        else:
+            # 兜底：使用默认配置
+            role_config = self.role_data.get('default', {}) if isinstance(self.role_data, dict) else {}
+            print(f"⚠️ 未找到角色 {speaker} 的配置，使用默认配置")
+        
+        # 获取该角色的语速系数（优先使用角色配置，否则使用全局配置）
+        role_speed_factor = role_config.get('speed_factor', self.speed_factor)
+        
+        # 获取声音配置
+        voice = role_config.get('voice', '墨讲师')  # 默认使用墨讲师
+        
+        # 根据文本语言选择合适的模型
+        model = self._select_qwen_model(text, role_config)
+        
+        # 构建请求参数
+        params = {
+            'model': model,
+            'text': text,
+            'sample_rate': 48000
+        }
+        
+        # 如果指定了声音，尝试使用（某些模型支持）
+        if voice and voice != 'default':
+            # 对于支持多声音的模型，可以添加voice参数
+            # params['voice'] = voice
+            pass
+        
+        if speaker:
+            print(f"🔄 调用Qwen TTS API [{speaker}, 声音={voice}, 语速={role_speed_factor}]: {text[:30]}...")
+        else:
+            print(f"🔄 调用Qwen TTS API [声音={voice}, 语速={role_speed_factor}]: {text[:30]}...")
+        
+        try:
+            # 调用TTS API
+            response = SpeechSynthesizer.call(**params)
+            
+            # 检查响应状态
+            resp_dict = response.get_response()
+            if resp_dict.get('status_code') == 200:
+                # 获取音频数据
+                audio_data = response.get_audio_data()
+                
+                if audio_data:
+                    # 保存音频文件
+                    with open(output_path, 'wb') as f:
+                        f.write(audio_data)
+                    
+                    print(f"✅ 语音合成成功: {output_path.name}")
+                    return str(output_path)
+                else:
+                    raise Exception("音频数据为空")
+            else:
+                raise Exception(f"API调用失败: {resp_dict}")
+                
+        except Exception as e:
+            print(f"❌ Qwen TTS合成失败: {e}")
+            raise
+    
+    def _select_qwen_model(self, text, role_config):
+        """
+        根据文本内容和角色配置选择合适的Qwen TTS模型
+        
+        Args:
+            text: 要合成的文本
+            role_config: 角色配置
+            
+        Returns:
+            str: 模型名称
+        """
+        # 检查角色配置中是否指定了模型
+        if 'model' in role_config:
+            return role_config['model']
+        
+        # 检查全局text_lang设置
+        if hasattr(self, 'text_lang'):
+            if self.text_lang == 'ja':
+                return 'sambert-zhiying-v1'  # 日语模型
+            elif self.text_lang == 'en':
+                return 'sambert-zhiying-v1'  # 英语也用这个多语言模型
+            elif self.text_lang == 'zh':
+                return 'sambert-zhichu-v1'   # 中文模型
+        
+        # 简单的语言检测
+        import re
+        
+        # 检测日语字符（平假名、片假名、汉字）
+        japanese_pattern = r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]'
+        if re.search(japanese_pattern, text):
+            # 进一步检测是否包含假名（更确定是日语）
+            kana_pattern = r'[\u3040-\u309F\u30A0-\u30FF]'
+            if re.search(kana_pattern, text):
+                print(f"   🎌 检测到日语文本，使用日语模型")
+                return 'sambert-zhiying-v1'
+        
+        # 检测英语字符
+        english_pattern = r'^[a-zA-Z\s\.,!?;:\'\"()-]+$'
+        if re.match(english_pattern, text.strip()):
+            print(f"   🇺🇸 检测到英语文本，使用多语言模型")
+            return 'sambert-zhiying-v1'
+        
+        # 默认使用中文模型
+        print(f"   🇨🇳 默认使用中文模型")
+        return 'sambert-zhichu-v1'
     
     def create_silence(self, duration_ms):
         """创建静音音频"""
@@ -302,11 +483,23 @@ class TTSDubbingProcessor:
             # 获取时间信息
             start_ms = self.time_to_ms(subtitle['start'])
             end_ms = self.time_to_ms(subtitle['end'])
+            target_duration_ms = end_ms - start_ms
             
-            # 合成语音（传递说话人信息）
+            # 合成语音（传递说话人信息和目标时长）
             speaker = subtitle.get('speaker', None)
-            audio_path = self.synthesize_speech(subtitle['text'], i + 1, speaker)
+            
+            # 如果启用自动对齐，传入目标时长让TTS自动调整语速
+            if self.auto_align:
+                audio_path = self.synthesize_speech(subtitle['text'], i + 1, speaker, target_duration_ms)
+            else:
+                audio_path = self.synthesize_speech(subtitle['text'], i + 1, speaker)
+            
             audio_files.append(audio_path)
+            
+            # 测量实际音频时长（方案B需要）
+            from pydub import AudioSegment
+            actual_audio = AudioSegment.from_file(audio_path)
+            actual_duration_ms = len(actual_audio)
             
             # 构建字幕数据（用于双重变速）
             subtitle_data.append({
@@ -314,7 +507,9 @@ class TTSDubbingProcessor:
                 'end_ms': end_ms,
                 'text': subtitle['text'],
                 'audio_file': audio_path,
-                'speaker': speaker
+                'speaker': speaker,
+                'original_duration_ms': target_duration_ms,  # 原始字幕时长
+                'actual_duration_ms': actual_duration_ms     # 实际音频时长
             })
         
         # 3. 判断是否使用保持总时长功能（优先级最高）
@@ -336,11 +531,13 @@ class TTSDubbingProcessor:
                 print(f"📊 语速系数: {self.speed_factor}")
                 print("⏱️ "*30 + "\n")
                 
-                # 使用TimelineAdjuster动态调整时间轴
+                # 使用TimelineAdjuster动态调整时间轴（带语速限制）
                 timeline_adjuster = TimelineAdjuster(
                     subtitles=subtitle_data,
                     audio_files=audio_files,
-                    preserve_total_time=True
+                    preserve_total_time=True,
+                    target_speed_factor=self.speed_factor,
+                    max_speed_limit=2.0  # 限制最大语速为2.0x
                 )
                 
                 # 调整时间轴
@@ -408,7 +605,7 @@ class TTSDubbingProcessor:
                 end_ms = subtitle_info['end_ms']
                 duration_ms = end_ms - start_ms
                 
-                # 如果需要，添加静音以对齐时间轴
+                # 添加字幕前的静音以对齐时间轴
                 if start_ms > last_end_time:
                     silence_duration = start_ms - last_end_time
                     print(f"  ⏸️  添加静音: {silence_duration}ms")
@@ -441,14 +638,28 @@ class TTSDubbingProcessor:
                     last_end_time += silence_ms
             
             # 拼接所有音频
-            final_audio = sum(audio_segments)
+            if not audio_segments:
+                raise ValueError("没有音频片段可以拼接")
+            
+            # 使用第一个片段作为起点，然后逐个拼接
+            final_audio = audio_segments[0]
+            for segment in audio_segments[1:]:
+                final_audio += segment
             
             # 导出最终音频
             output_path = self.output_dir / "dubbing_result.wav"
             print(f"💾 导出最终音频: {output_path}")
             final_audio.export(output_path, format="wav")
             output_path = str(output_path)
-            updated_srt_path = None  # 传统方式不生成更新后的SRT
+            
+            # 生成精确字幕（方案B - 基于实际音频片段时长）
+            updated_srt_path = None
+            if self.remove_silent_gaps:
+                # 使用方案B：基于每个片段的实际时长生成精确字幕
+                updated_srt_path = self._generate_precise_subtitle_from_segments(
+                    subtitle_data,
+                    min_gap_ms=300  # 片段之间保留300ms间隙
+                )
         
         # 6. 清理临时文件
         print("🧹 清理临时文件...")
@@ -537,7 +748,7 @@ class TTSDubbingProcessor:
     
     def _merge_audio_with_timeline(self, updated_subtitles, audio_files):
         """
-        根据更新后的时间轴合并音频
+        根据更新后的时间轴合并音频，并验证时长准确性
         
         Args:
             updated_subtitles: 更新后的字幕列表（包含新的start_ms和end_ms）
@@ -555,6 +766,11 @@ class TTSDubbingProcessor:
         speedup_temp_dir = self.temp_dir / "speedup"
         speedup_temp_dir.mkdir(parents=True, exist_ok=True)
         
+        # 用于验证的统计信息
+        total_audio_duration = 0
+        total_gap_duration = 0
+        duration_mismatches = []
+        
         for i, subtitle in enumerate(updated_subtitles):
             # 添加字幕前的静音间隙
             if subtitle['start_ms'] > current_time:
@@ -562,6 +778,7 @@ class TTSDubbingProcessor:
                 print(f"  字幕 {i+1} 前添加静音: {gap}ms")
                 audio_segments.append(AudioSegment.silent(duration=gap))
                 current_time += gap
+                total_gap_duration += gap
             
             # 加载配音音频
             audio_file = audio_files[i] if i < len(audio_files) else None
@@ -606,38 +823,255 @@ class TTSDubbingProcessor:
                             audio = audio + AudioSegment.silent(duration=padding)
                             print(f"    ⚠️ 音频太短，添加尾部静音 {padding}ms")
                     
+                    # 记录时长差异（用于验证）
+                    final_audio_duration = len(audio)
+                    if abs(final_audio_duration - target_duration) > 50:
+                        duration_mismatches.append({
+                            'index': i+1,
+                            'expected': target_duration,
+                            'actual': final_audio_duration,
+                            'diff': final_audio_duration - target_duration
+                        })
+                    
                     audio_segments.append(audio)
                     current_time += len(audio)
-                    print(f"  字幕 {i+1}: 添加配音 {len(audio)}ms")
+                    total_audio_duration += len(audio)
+                    print(f"  字幕 {i+1}: 添加配音 {len(audio)}ms (预期: {target_duration}ms)")
                     
                 except Exception as e:
                     print(f"  ⚠️ 字幕 {i+1} 加载音频失败: {e}，使用静音")
                     silence_duration = subtitle['end_ms'] - subtitle['start_ms']
                     audio_segments.append(AudioSegment.silent(duration=silence_duration))
                     current_time += silence_duration
+                    total_audio_duration += silence_duration
             else:
                 # 使用静音填充
                 silence_duration = subtitle['end_ms'] - subtitle['start_ms']
                 print(f"  字幕 {i+1}: 使用静音填充 {silence_duration}ms")
                 audio_segments.append(AudioSegment.silent(duration=silence_duration))
                 current_time += silence_duration
+                total_audio_duration += silence_duration
         
         # 合并所有音频片段
         print(f"\n  🔗 合并 {len(audio_segments)} 个音频片段...")
-        final_audio = sum(audio_segments)
+        
+        if not audio_segments:
+            raise ValueError("没有音频片段可以拼接")
+        
+        # 使用第一个片段作为起点，然后逐个拼接
+        final_audio = audio_segments[0]
+        for segment in audio_segments[1:]:
+            final_audio += segment
         
         # 导出最终音频
         output_path = self.output_dir / "dubbing_result.wav"
         print(f"  💾 导出最终音频: {output_path}")
         final_audio.export(str(output_path), format="wav")
         
-        print(f"  ✅ 最终音频时长: {len(final_audio)}ms ({len(final_audio)/1000:.1f}秒)")
+        # 验证最终时长
+        final_duration = len(final_audio)
+        expected_duration = updated_subtitles[-1]['end_ms'] if updated_subtitles else 0
+        
+        print(f"\n📊 音频拼接验证:")
+        print(f"   配音总时长: {total_audio_duration/1000:.2f}秒 ({total_audio_duration}ms)")
+        print(f"   间隙总时长: {total_gap_duration/1000:.2f}秒 ({total_gap_duration}ms)")
+        print(f"   预期总时长: {expected_duration/1000:.2f}秒 ({expected_duration}ms)")
+        print(f"   实际总时长: {final_duration/1000:.2f}秒 ({final_duration}ms)")
+        print(f"   差异: {abs(final_duration - expected_duration)/1000:.2f}秒 ({abs(final_duration - expected_duration)}ms)")
+        
+        if abs(final_duration - expected_duration) < 100:
+            print(f"   ✅ 时长匹配良好（误差 < 0.1秒）")
+        elif abs(final_duration - expected_duration) < 1000:
+            print(f"   ⚠️ 时长有小幅差异（误差 < 1秒）")
+        else:
+            print(f"   ❌ 时长差异较大（误差 >= 1秒）")
+        
+        if duration_mismatches:
+            print(f"\n   发现 {len(duration_mismatches)} 个音频时长不匹配:")
+            for mismatch in duration_mismatches[:5]:
+                print(f"      字幕{mismatch['index']}: 预期{mismatch['expected']}ms, 实际{mismatch['actual']}ms, 差异{mismatch['diff']:+d}ms")
+            if len(duration_mismatches) > 5:
+                print(f"      ... 还有 {len(duration_mismatches)-5} 个不匹配")
         
         return str(output_path)
     
+    def _generate_precise_subtitle_from_segments(self, subtitle_data, min_gap_ms=300):
+        """
+        基于音频片段的实际时长生成精确的字幕文件（方案B）
+        
+        Args:
+            subtitle_data: 字幕数据列表，每项包含 text, actual_duration_ms, speaker 等
+            min_gap_ms: 片段之间的最小间隙（毫秒），默认300ms
+            
+        Returns:
+            str: 生成的精确字幕文件路径
+        """
+        print(f"\n🎯 生成精确字幕（方案B - 基于实际音频时长）:")
+        print(f"   字幕数量: {len(subtitle_data)}")
+        print(f"   最小间隙: {min_gap_ms}ms")
+        
+        # 累积计算每条字幕的新时间轴
+        precise_subtitles = []
+        current_time_ms = 0
+        
+        for i, segment in enumerate(subtitle_data):
+            # 获取实际音频时长
+            actual_duration = segment.get('actual_duration_ms', 0)
+            
+            # 计算新的开始和结束时间
+            new_start_ms = current_time_ms
+            new_end_ms = current_time_ms + actual_duration
+            
+            precise_subtitles.append({
+                'index': i + 1,
+                'start_ms': new_start_ms,
+                'end_ms': new_end_ms,
+                'text': segment['text'],
+                'speaker': segment.get('speaker', None),
+                'original_start_ms': segment['start_ms'],
+                'original_end_ms': segment['end_ms'],
+                'actual_duration_ms': actual_duration
+            })
+            
+            # 更新当前时间（加上音频时长和最小间隙）
+            current_time_ms = new_end_ms + min_gap_ms
+            
+            # 打印调整信息（前5条）
+            if i < 5:
+                original_duration = segment['end_ms'] - segment['start_ms']
+                print(f"   字幕{i+1}: {segment['start_ms']}ms → {new_start_ms}ms, "
+                      f"时长 {original_duration}ms → {actual_duration}ms")
+        
+        # 保存精确字幕
+        output_srt = self.output_dir / "precise_subtitles.srt"
+        
+        with open(output_srt, 'w', encoding='utf-8') as f:
+            for subtitle in precise_subtitles:
+                f.write(f"{subtitle['index']}\n")
+                
+                # 转换毫秒为SRT时间格式
+                start_time = self._ms_to_srt_time(subtitle['start_ms'])
+                end_time = self._ms_to_srt_time(subtitle['end_ms'])
+                
+                f.write(f"{start_time} --> {end_time}\n")
+                
+                # 如果有说话人标记，保留它
+                if subtitle['speaker']:
+                    f.write(f"[{subtitle['speaker']}] {subtitle['text']}\n\n")
+                else:
+                    f.write(f"{subtitle['text']}\n\n")
+        
+        # 统计信息
+        total_audio_duration = sum(s['actual_duration_ms'] for s in precise_subtitles)
+        total_gaps = (len(precise_subtitles) - 1) * min_gap_ms
+        final_duration = precise_subtitles[-1]['end_ms'] + min_gap_ms if precise_subtitles else 0
+        
+        print(f"\n✅ 精确字幕生成完成:")
+        print(f"   总音频时长: {total_audio_duration/1000:.2f}秒")
+        print(f"   总间隙时长: {total_gaps/1000:.2f}秒")
+        print(f"   最终总时长: {final_duration/1000:.2f}秒")
+        print(f"   保存位置: {output_srt}")
+        
+        return str(output_srt)
+    
+    def _adjust_subtitle_timeline_for_audio(self, original_srt_path, audio_duration_ms):
+        """
+        根据实际音频时长自动调整字幕时间轴（方案A）
+        当TTS音频比原字幕时间轴长时，按比例拉伸字幕时间轴
+        
+        Args:
+            original_srt_path: 原始SRT文件路径
+            audio_duration_ms: 实际音频总时长（毫秒）
+            
+        Returns:
+            str: 调整后的SRT文件路径，如果不需要调整则返回None
+        """
+        # 解析原始SRT获取原始时间轴
+        print(f"\n🔍 解析字幕文件: {original_srt_path}")
+        
+        # 临时保存当前的srt_path，然后使用传入的路径
+        original_srt_path_backup = self.srt_path
+        self.srt_path = original_srt_path
+        
+        subtitles = self.parse_srt()
+        
+        # 恢复原来的srt_path
+        self.srt_path = original_srt_path_backup
+        
+        if not subtitles:
+            print(f"⚠️ 未能解析字幕文件")
+            return None
+        
+        print(f"✅ 成功解析 {len(subtitles)} 条字幕")
+        
+        # 获取原始字幕的总时长
+        original_duration_ms = self.time_to_ms(subtitles[-1]['end'])
+        
+        # 判断是否需要调整（音频比字幕长10%以上）
+        if audio_duration_ms <= original_duration_ms * 1.1:
+            print(f"\n📊 字幕时间轴无需调整:")
+            print(f"   原始字幕时长: {original_duration_ms/1000:.2f}秒")
+            print(f"   实际音频时长: {audio_duration_ms/1000:.2f}秒")
+            print(f"   差异: {(audio_duration_ms - original_duration_ms)/1000:.2f}秒 (< 10%)")
+            return None
+        
+        # 计算拉伸比例
+        stretch_ratio = audio_duration_ms / original_duration_ms
+        
+        print(f"\n🎯 自动调整字幕时间轴（方案A）:")
+        print(f"   原始字幕时长: {original_duration_ms/1000:.2f}秒 ({original_duration_ms}ms)")
+        print(f"   实际音频时长: {audio_duration_ms/1000:.2f}秒 ({audio_duration_ms}ms)")
+        print(f"   拉伸比例: {stretch_ratio:.2f}x")
+        
+        # 调整每条字幕的时间戳
+        adjusted_subtitles = []
+        for subtitle in subtitles:
+            start_ms = self.time_to_ms(subtitle['start'])
+            end_ms = self.time_to_ms(subtitle['end'])
+            
+            # 按比例拉伸
+            new_start_ms = int(start_ms * stretch_ratio)
+            new_end_ms = int(end_ms * stretch_ratio)
+            
+            adjusted_subtitles.append({
+                'index': subtitle['index'],
+                'start_ms': new_start_ms,
+                'end_ms': new_end_ms,
+                'text': subtitle['text'],
+                'speaker': subtitle.get('speaker', None)
+            })
+        
+        # 保存调整后的字幕
+        output_srt = self.output_dir / "adjusted_subtitles.srt"
+        
+        with open(output_srt, 'w', encoding='utf-8') as f:
+            for subtitle in adjusted_subtitles:
+                f.write(f"{subtitle['index']}\n")
+                
+                # 转换毫秒为SRT时间格式
+                start_time = self._ms_to_srt_time(subtitle['start_ms'])
+                end_time = self._ms_to_srt_time(subtitle['end_ms'])
+                
+                f.write(f"{start_time} --> {end_time}\n")
+                
+                # 如果有说话人标记，保留它
+                if subtitle['speaker']:
+                    f.write(f"[{subtitle['speaker']}] {subtitle['text']}\n\n")
+                else:
+                    f.write(f"{subtitle['text']}\n\n")
+        
+        # 验证调整结果
+        final_duration_ms = adjusted_subtitles[-1]['end_ms']
+        print(f"\n✅ 字幕时间轴调整完成:")
+        print(f"   调整后总时长: {final_duration_ms/1000:.2f}秒 ({final_duration_ms}ms)")
+        print(f"   与音频差异: {abs(final_duration_ms - audio_duration_ms)}ms")
+        print(f"   保存位置: {output_srt}")
+        
+        return str(output_srt)
+    
     def _save_updated_srt(self, subtitles):
         """
-        保存更新后的字幕文件
+        保存更新后的字幕文件，并验证时间轴
         
         Returns:
             str: 保存的SRT文件路径
@@ -655,7 +1089,39 @@ class TTSDubbingProcessor:
                 f.write(f"{start_time} --> {end_time}\n")
                 f.write(f"{subtitle['text']}\n\n")
         
-        print(f"💾 保存更新后的字幕: {output_srt}")
+        # 验证时间轴
+        print(f"\n📊 字幕时间轴验证:")
+        total_subtitle_duration = sum(s['end_ms'] - s['start_ms'] for s in subtitles)
+        total_timeline = subtitles[-1]['end_ms'] if subtitles else 0
+        
+        print(f"   字幕总数: {len(subtitles)}")
+        print(f"   字幕总时长: {total_subtitle_duration/1000:.2f}秒 ({total_subtitle_duration}ms)")
+        print(f"   时间轴总长: {total_timeline/1000:.2f}秒 ({total_timeline}ms)")
+        print(f"   间隙总时长: {(total_timeline - total_subtitle_duration)/1000:.2f}秒 ({total_timeline - total_subtitle_duration}ms)")
+        
+        # 检查异常
+        warnings = []
+        for i, sub in enumerate(subtitles):
+            duration = sub['end_ms'] - sub['start_ms']
+            if duration < 100:
+                warnings.append(f"   ⚠️ 字幕{i+1}时长过短: {duration}ms")
+            if i > 0:
+                gap = sub['start_ms'] - subtitles[i-1]['end_ms']
+                if gap < 0:
+                    warnings.append(f"   ⚠️ 字幕{i}和{i+1}重叠: {abs(gap)}ms")
+                elif gap > 5000:
+                    warnings.append(f"   ⚠️ 字幕{i}和{i+1}间隙过大: {gap}ms ({gap/1000:.1f}秒)")
+        
+        if warnings:
+            print(f"\n   发现 {len(warnings)} 个警告:")
+            for warning in warnings[:5]:  # 只显示前5个
+                print(warning)
+            if len(warnings) > 5:
+                print(f"   ... 还有 {len(warnings)-5} 个警告")
+        else:
+            print(f"   ✅ 未发现异常")
+        
+        print(f"\n💾 保存更新后的字幕: {output_srt}")
         return str(output_srt)
     
     def _ms_to_srt_time(self, ms):
