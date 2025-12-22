@@ -332,13 +332,21 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                 )
                 audio_files.append(audio_path)
                 
+                # 测量实际音频时长（方案B需要）
+                from pydub import AudioSegment
+                actual_audio = AudioSegment.from_file(audio_path)
+                actual_duration_ms = len(actual_audio)
+                target_duration_ms = end_ms - start_ms
+                
                 # 构建字幕数据
                 subtitle_data.append({
                     'start_ms': start_ms,
                     'end_ms': end_ms,
                     'text': subtitle['text'],
                     'audio_file': audio_path,
-                    'speaker': subtitle['speaker']
+                    'speaker': subtitle['speaker'],
+                    'original_duration_ms': target_duration_ms,  # 原始字幕时长
+                    'actual_duration_ms': actual_duration_ms     # 实际音频时长
                 })
                 
             except Exception as e:
@@ -382,11 +390,22 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                 end_ms = subtitle_info['end_ms']
                 duration_ms = end_ms - start_ms
                 
-                # 添加静音以对齐时间轴
+                # 添加字幕前的静音间隙
                 if start_ms > last_end_time:
                     silence_duration = start_ms - last_end_time
-                    print(f"  ⏸️  添加静音: {silence_duration}ms")
-                    audio_segments.append(self.create_silence(silence_duration))
+                    
+                    if self.remove_silent_gaps:
+                        # 移除静音间隙模式：只保留短暂的自然停顿（最多300ms）
+                        natural_pause = min(silence_duration, 300)
+                        if natural_pause > 0:
+                            print(f"  ⏸️  添加自然停顿: {natural_pause}ms")
+                            audio_segments.append(self.create_silence(natural_pause))
+                            last_end_time += natural_pause
+                    else:
+                        # 保留时间轴模式：添加完整的静音间隙
+                        print(f"  ⏸️  添加静音: {silence_duration}ms")
+                        audio_segments.append(self.create_silence(silence_duration))
+                        last_end_time += silence_duration
                 
                 # 加载音频
                 audio = AudioSegment.from_wav(subtitle_info['audio_file'])
@@ -404,23 +423,37 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                         audio = audio + self.create_silence(padding)
                 
                 audio_segments.append(audio)
-                last_end_time = end_ms
+                last_end_time += len(audio)
                 
-                # 添加字幕间隔静音
-                if i < len(subtitle_data) - 1:
+                # 添加字幕间隔静音（仅在不移除静音间隙时）
+                if not self.remove_silent_gaps and i < len(subtitle_data) - 1:
                     silence_ms = int(self.silence_duration * 1000)
                     audio_segments.append(self.create_silence(silence_ms))
                     last_end_time += silence_ms
             
             # 拼接所有音频
-            final_audio = sum(audio_segments)
+            if not audio_segments:
+                raise ValueError("没有音频片段可以拼接")
+            
+            # 使用第一个片段作为起点，然后逐个拼接
+            final_audio = audio_segments[0]
+            for segment in audio_segments[1:]:
+                final_audio += segment
             
             # 导出最终音频
             output_path = self.output_dir / "multi_role_dubbing_result.wav"
             print(f"💾 导出最终音频: {output_path}")
             final_audio.export(output_path, format="wav")
             output_path = str(output_path)
+            
+            # 生成精确字幕（方案B - 基于实际音频片段时长）
             updated_srt_path = None
+            if self.remove_silent_gaps:
+                # 使用方案B：基于每个片段的实际时长生成精确字幕
+                updated_srt_path = self._generate_precise_subtitle_from_segments(
+                    subtitle_data,
+                    min_gap_ms=300  # 片段之间保留300ms间隙
+                )
         
         print(f"PROGRESS:90%")
         

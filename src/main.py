@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware  # 新增：CORS中间件
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import sys
-from fastapi.responses import RedirectResponse  # 新增：导入重定向响应类
+from fastapi.responses import RedirectResponse, FileResponse  # 新增：导入重定向响应类和文件响应类
 import socket
 import webbrowser
 import pathlib
@@ -740,6 +740,300 @@ async def open_folder(req: OpenFolderRequest):  # 关键：用模型接收请求
         raise HTTPException(status_code=500, detail=f"打开文件夹失败：{str(e)}")
 
 
+# -------------------------- 视频合并API --------------------------
+@app.post("/api/video-merger/merge", summary="合并视频、音频和字幕")
+async def merge_video_audio_subtitle(
+    video: UploadFile = File(..., description="MP4视频文件"),
+    audio: UploadFile = File(None, description="WAV/MP3音频文件"),
+    subtitle: UploadFile = File(None, description="SRT字幕文件"),
+    mode: str = Form("replace_audio", description="合并模式"),
+    remove_original_audio: bool = Form(True, description="是否去除原始音轨")
+):
+    """
+    视频合并API
+    支持6种合并模式：
+    - replace_audio: 替换音轨
+    - mix_audio: 混合音轨
+    - embed_subtitle: 嵌入字幕
+    - burn_subtitle: 烧录字幕
+    - remove_audio: 去除音轨
+    - video_only: 仅视频
+    """
+    try:
+        if not video_merger:
+            raise HTTPException(status_code=500, detail="视频合并器未初始化，请检查FFmpeg安装")
+        
+        # 生成任务ID
+        task_id = str(uuid.uuid4())
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        # 创建临时目录
+        temp_dir = pathlib.Path(current_dir) / "temp" / f"video_merge_{task_id}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 保存上传的文件
+        video_path = temp_dir / f"{timestamp}_video{pathlib.Path(video.filename).suffix}"
+        with open(video_path, "wb") as f:
+            content = await video.read()
+            f.write(content)
+        
+        audio_path = None
+        if audio and audio.filename:
+            audio_path = temp_dir / f"{timestamp}_audio{pathlib.Path(audio.filename).suffix}"
+            with open(audio_path, "wb") as f:
+                content = await audio.read()
+                f.write(content)
+        
+        subtitle_path = None
+        if subtitle and subtitle.filename:
+            subtitle_path = temp_dir / f"{timestamp}_subtitle{pathlib.Path(subtitle.filename).suffix}"
+            with open(subtitle_path, "wb") as f:
+                content = await subtitle.read()
+                f.write(content)
+        
+        # 生成输出文件路径
+        output_filename = f"{timestamp}_merged.mp4"
+        output_path = pathlib.Path(output_dir) / output_filename
+        
+        # 初始化任务状态
+        video_merge_tasks[task_id] = {
+            "task_id": task_id,
+            "status": "running",
+            "progress": 0,
+            "output_path": None,
+            "error": None,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        # 在后台线程中执行合并
+        def run_merge_task():
+            try:
+                start_time = time.time()
+                print(f"🎬 开始视频合并任务: {task_id}")
+                print(f"📹 视频文件: {video_path}")
+                print(f"🎵 音频文件: {audio_path}")
+                print(f"📝 字幕文件: {subtitle_path}")
+                print(f"📁 输出路径: {output_path}")
+                print(f"🔧 合并模式: {mode}")
+                
+                # 更新进度
+                video_merge_tasks[task_id]["progress"] = 10
+                
+                # 更新进度：开始合并
+                video_merge_tasks[task_id]["progress"] = 30
+                
+                # 执行合并
+                result_path = video_merger.merge_video_audio_subtitle(
+                    video_path=str(video_path),
+                    audio_path=str(audio_path) if audio_path else None,
+                    subtitle_path=str(subtitle_path) if subtitle_path else None,
+                    output_path=str(output_path),
+                    mode=mode,
+                    remove_original_audio=remove_original_audio
+                )
+                
+                # 计算处理时间
+                processing_time = time.time() - start_time
+                
+                print(f"✅ 视频合并完成: {result_path}")
+                print(f"⏱️ 处理时间: {processing_time:.2f}秒")
+                
+                # 更新任务状态
+                video_merge_tasks[task_id]["status"] = "completed"
+                video_merge_tasks[task_id]["progress"] = 100
+                video_merge_tasks[task_id]["output_path"] = str(result_path)
+                video_merge_tasks[task_id]["processing_time"] = f"{processing_time:.2f}秒"
+                video_merge_tasks[task_id]["filename"] = output_filename
+                
+            except Exception as e:
+                print(f"❌ 视频合并任务失败: {e}")
+                import traceback
+                traceback.print_exc()
+                video_merge_tasks[task_id]["status"] = "failed"
+                video_merge_tasks[task_id]["error"] = str(e)
+            
+            finally:
+                # 清理临时文件
+                try:
+                    import shutil
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
+        
+        # 启动后台线程
+        thread = threading.Thread(target=run_merge_task, daemon=True)
+        thread.start()
+        
+        return {"task_id": task_id, "message": "视频合并任务已启动"}
+        
+    except Exception as e:
+        print(f"❌ 启动视频合并任务失败: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"启动视频合并任务失败: {str(e)}")
+
+
+@app.post("/api/video-merger/merge-simple", summary="只合并视频和音频（无字幕）")
+async def merge_video_audio_only(
+    video: UploadFile = File(..., description="MP4视频文件"),
+    audio: UploadFile = File(..., description="WAV/MP3音频文件"),
+    mode: str = Form("replace", description="合并模式: replace/mix/remove"),
+    enable_slowdown: bool = Form(True, description="音频比视频长时是否自动慢放视频")
+):
+    """
+    只合并视频和音频（不涉及字幕）
+    
+    合并模式：
+    - replace: 替换音轨（默认）
+    - mix: 混合音轨（保留原音+新音频）
+    - remove: 仅去除原音轨
+    """
+    try:
+        if not video_merger:
+            raise HTTPException(status_code=500, detail="视频合并器未初始化，请检查FFmpeg安装")
+        
+        # 生成任务ID
+        task_id = str(uuid.uuid4())
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        # 创建临时目录
+        temp_dir = pathlib.Path(current_dir) / "temp" / f"video_merge_simple_{task_id}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 保存上传的文件
+        video_path = temp_dir / f"{timestamp}_video{pathlib.Path(video.filename).suffix}"
+        with open(video_path, "wb") as f:
+            content = await video.read()
+            f.write(content)
+        
+        audio_path = temp_dir / f"{timestamp}_audio{pathlib.Path(audio.filename).suffix}"
+        with open(audio_path, "wb") as f:
+            content = await audio.read()
+            f.write(content)
+        
+        # 生成输出文件路径
+        output_filename = f"{timestamp}_merged_simple.mp4"
+        output_path = pathlib.Path(output_dir) / output_filename
+        
+        # 初始化任务状态
+        video_merge_tasks[task_id] = {
+            "task_id": task_id,
+            "status": "running",
+            "progress": 0,
+            "output_path": None,
+            "error": None,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        # 在后台线程中执行合并
+        def run_merge_simple_task():
+            try:
+                start_time = time.time()
+                
+                # 执行合并
+                result_path = video_merger.merge_video_audio_only(
+                    video_path=str(video_path),
+                    audio_path=str(audio_path),
+                    output_path=str(output_path),
+                    mode=mode,
+                    enable_slowdown=enable_slowdown
+                )
+                
+                # 更新任务状态
+                video_merge_tasks[task_id]["status"] = "completed"
+                video_merge_tasks[task_id]["progress"] = 100
+                video_merge_tasks[task_id]["output_path"] = output_filename
+                video_merge_tasks[task_id]["duration"] = time.time() - start_time
+                
+                print(f"✅ 视频合并任务完成: {task_id}")
+                print(f"   输出文件: {output_filename}")
+                print(f"   耗时: {video_merge_tasks[task_id]['duration']:.2f}秒")
+                
+            except Exception as e:
+                video_merge_tasks[task_id]["status"] = "failed"
+                video_merge_tasks[task_id]["error"] = str(e)
+                print(f"❌ 视频合并任务失败: {task_id}")
+                print(f"   错误: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # 启动后台线程
+        import threading
+        thread = threading.Thread(target=run_merge_simple_task)
+        thread.daemon = True
+        thread.start()
+        
+        return {
+            "task_id": task_id,
+            "message": "视频合并任务已启动",
+            "status_url": f"/api/video-merger/status/{task_id}"
+        }
+        
+    except Exception as e:
+        print(f"❌ 启动视频合并任务失败: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"启动视频合并任务失败: {str(e)}")
+
+
+@app.get("/api/video-merger/status/{task_id}", summary="获取视频合并任务状态")
+async def get_video_merge_status(task_id: str):
+    """获取视频合并任务的当前状态"""
+    if task_id not in video_merge_tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    return video_merge_tasks[task_id]
+
+
+@app.get("/api/video-merger/download/{filename}", summary="下载合并后的视频")
+async def download_merged_video(filename: str):
+    """下载合并后的视频文件"""
+    file_path = pathlib.Path(output_dir) / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    
+    return FileResponse(
+        str(file_path),
+        media_type="video/mp4",
+        filename=filename
+    )
+
+
+@app.post("/api/video-merger/info", summary="获取视频信息")
+async def get_video_info(
+    video: UploadFile = File(..., description="视频文件")
+):
+    """获取视频文件的基本信息"""
+    try:
+        if not video_merger:
+            raise HTTPException(status_code=500, detail="视频合并器未初始化")
+        
+        # 保存临时文件
+        temp_dir = pathlib.Path(current_dir) / "temp" / "video_info"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        temp_file = temp_dir / f"temp_{uuid.uuid4()}{pathlib.Path(video.filename).suffix}"
+        with open(temp_file, "wb") as f:
+            content = await video.read()
+            f.write(content)
+        
+        try:
+            # 获取视频信息
+            info = video_merger.get_video_info(str(temp_file))
+            return {"success": True, "info": info}
+        
+        finally:
+            # 清理临时文件
+            try:
+                temp_file.unlink()
+            except:
+                pass
+    
+    except Exception as e:
+        print(f"❌ 获取视频信息失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取视频信息失败: {str(e)}")
+
+
 # -------------------------- TTS配置管理API --------------------------
 @app.get("/api/tts-config", summary="获取TTS配置")
 async def get_tts_config():
@@ -866,6 +1160,36 @@ async def gpt_sovits_proxy(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS代理失败: {str(e)}")
 
+
+# -------------------------- 视频合并API --------------------------
+# 导入视频合并模块
+video_merger = None
+try:
+    # 确保scripts目录在Python路径中
+    scripts_path = str(current_dir / "src" / "scripts")
+    if scripts_path not in sys.path:
+        sys.path.insert(0, scripts_path)
+    
+    from video_merger import VideoMerger
+    
+    # 初始化视频合并器
+    ffmpeg_path = "ffmpeg"
+    project_ffmpeg = current_dir / "ffmpeg" / "bin" / "ffmpeg.exe"
+    if project_ffmpeg.exists():
+        ffmpeg_path = str(project_ffmpeg)
+    
+    video_merger = VideoMerger(ffmpeg_path=ffmpeg_path)
+    print(f"✅ 视频合并器初始化成功，FFmpeg路径: {ffmpeg_path}")
+except ImportError as e:
+    print(f"⚠️ 视频合并模块导入失败: {e}")
+    print(f"📁 Scripts路径: {current_dir / 'src' / 'scripts'}")
+    video_merger = None
+except Exception as e:
+    print(f"⚠️ 视频合并器初始化失败: {e}")
+    video_merger = None
+
+# 视频合并任务状态存储
+video_merge_tasks = {}
 
 # -------------------------- TTS配音API --------------------------
 # 存储TTS配音任务状态

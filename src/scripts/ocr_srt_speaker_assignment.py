@@ -12,6 +12,12 @@ if current_script_dir not in sys.path:
     sys.path.insert(0, current_script_dir)
 print("子进程 sys.path：", sys.path)
 
+# 检查是否有强制CPU参数（需要在导入torch_loader之前设置）
+FORCE_CPU = "--force-cpu" in sys.argv
+if FORCE_CPU:
+    os.environ["FORCE_CPU_MODE"] = "1"
+    print("⚠️ 检测到 --force-cpu 参数，将强制使用CPU运行")
+
 from torch_loader import use_gpu, torch
 from util import (
     get_audio_duration,
@@ -430,6 +436,11 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="角色数量范围最大值",
+    )
+    parser.add_argument(
+        "--force-cpu",
+        action="store_true",
+        help="强制使用CPU运行（忽略GPU）",
     )
 
     args = parser.parse_args()

@@ -55,10 +55,17 @@ def _is_gpu_available(required_cuda_main=126):
 current_dir = pathlib.Path(__file__).parent.parent.parent  # 假设放在项目根目录，若在utils/则改为.parent.parent
 VENDOR_DIR = os.path.join(current_dir, "vendor")
 
-# 2. 检测GPU
-use_gpu = _is_gpu_available(required_cuda_main=126)
+# 2. 检查是否强制使用CPU（通过环境变量）
+force_cpu_mode = os.environ.get("FORCE_CPU_MODE", "0") == "1"
 
-# 3. 选择并加载对应PyTorch版本
+# 3. 检测GPU（如果强制CPU模式，则跳过GPU检测）
+if force_cpu_mode:
+    use_gpu = False
+    print("[TorchLoader] 强制CPU模式已启用，跳过GPU检测")
+else:
+    use_gpu = _is_gpu_available(required_cuda_main=126)
+
+# 4. 选择并加载对应PyTorch版本
 if use_gpu:
     torch_path = os.path.join(VENDOR_DIR, "torch_gpu")
     print(f"[TorchLoader] 检测到兼容GPU，加载: {torch_path}")
@@ -69,16 +76,16 @@ else:
 # 将 torch_path 转换为绝对路径（避免子进程路径解析问题）
 torch_path = os.path.abspath(torch_path)  # 确保是绝对路径
 
-# 4. 优先加载目标PyTorch（插入sys.path最前面）
+# 5. 优先加载目标PyTorch（插入sys.path最前面）
 sys.path.insert(0, torch_path)
 
-# 5. 导入torch并验证
+# 6. 导入torch并验证
 try:
     import torch  # type: ignore
 except ImportError as e:
     raise RuntimeError(f"[TorchLoader] 加载PyTorch失败！请检查{torch_path}是否存在torch核心库") from e
 
-# 6. 导入torchvision并验证（先查路径，再查版本）
+# 7. 导入torchvision并验证（先查路径，再查版本）
 try:
     import torchvision  # type: ignore
     # 关键：打印实际加载的torchvision路径，确认是否在vendor目录下
@@ -86,8 +93,11 @@ try:
 except ImportError as e:
     raise RuntimeError(f"[TorchLoader] 加载torchvision失败！请检查{torch_path}是否存在torchvision") from e
 
-# 7. 验证版本和CUDA
-print(f"[TorchLoader] 已加载 PyTorch {torch.__version__}，torchvision {torchvision.__version__}，CUDA可用: {torch.cuda.is_available()}")
+# 8. 验证版本和CUDA
+cuda_available = torch.cuda.is_available()
+if force_cpu_mode and cuda_available:
+    print(f"[TorchLoader] ⚠️ 检测到GPU可用，但已强制使用CPU模式")
+print(f"[TorchLoader] 已加载 PyTorch {torch.__version__}，torchvision {torchvision.__version__}，CUDA可用: {cuda_available}，实际使用: {'CPU' if not use_gpu else 'GPU'}")
 
 # ---------------------- 导出供其他脚本使用的对象 ----------------------
 __all__ = ["torch", "torchvision", "use_gpu", "torch_path"]  # 导出torchvision，方便其他脚本直接使用
