@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频合并工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        .form-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border: 2px solid #e9ecef;
+        }
+
+        .form-section h3 {
+            color: #495057;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            display: flex;
+            align-items: center;
+        }
+
+        .form-section h3::before {
+            content: "📁";
+            margin-right: 10px;
+            font-size: 1.2em;
+        }
+
+        .file-input-group {
+            margin-bottom: 20px;
+        }
+
+        .file-input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .file-input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px dashed #dee2e6;
+            border-radius: 10px;
+            background: white;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .file-input:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+
+        .file-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .options-section {
+            background: #fff;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border: 2px solid #e9ecef;
+        }
+
+        .options-section h3 {
+            color: #495057;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+
+        .options-section h3::before {
+            content: "⚙️";
+            margin-right: 10px;
+        }
+
+        .option-group {
+            margin-bottom: 20px;
+        }
+
+        .option-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .mode-selector {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .mode-option {
+            position: relative;
+        }
+
+        .mode-option input[type="radio"] {
+            display: none;
+        }
+
+        .mode-option label {
+            display: block;
+            padding: 15px;
+            border: 2px solid #dee2e6;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+            background: white;
+        }
+
+        .mode-option input[type="radio"]:checked + label {
+            border-color: #667eea;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .mode-option label .mode-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .mode-option label .mode-desc {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.2);
+        }
+
+        .checkbox-group label {
+            margin-bottom: 0;
+            cursor: pointer;
+        }
+
+        .action-section {
+            text-align: center;
+            margin-top: 30px;
+        }
+
+        .merge-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.1em;
+            font-weight: 600;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .merge-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        .merge-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .progress-section {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #e9ecef;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .result-section {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .result-success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+
+        .result-error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+
+        .file-info {
+            background: #e3f2fd;
+            border: 1px solid #bbdefb;
+            border-radius: 8px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #1565c0;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+                margin: 10px;
+            }
+
+            .header h1 {
+                font-size: 2em;
+            }
+
+            .mode-selector {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 视频合并工具</h1>
+            <p>将MP4视频、TTS音轨和字幕智能合并</p>
+        </div>
+
+        <form id="mergeForm">
+            <!-- 文件选择区域 -->
+            <div class="form-section">
+                <h3>文件选择</h3>
+                
+                <div class="file-input-group">
+                    <label for="videoFile">📹 选择MP4视频文件 *</label>
+                    <input type="file" id="videoFile" name="videoFile" accept=".mp4" class="file-input" required>
+                    <div id="videoInfo" class="file-info" style="display: none;"></div>
+                </div>
+
+                <div class="file-input-group">
+                    <label for="audioFile">🎵 选择WAV音轨文件</label>
+                    <input type="file" id="audioFile" name="audioFile" accept=".wav,.mp3" class="file-input">
+                    <div id="audioInfo" class="file-info" style="display: none;"></div>
+                </div>
+
+                <div class="file-input-group">
+                    <label for="subtitleFile">📝 选择SRT字幕文件</label>
+                    <input type="file" id="subtitleFile" name="subtitleFile" accept=".srt" class="file-input">
+                    <div id="subtitleInfo" class="file-info" style="display: none;"></div>
+                </div>
+            </div>
+
+            <!-- 合并选项 -->
+            <div class="options-section">
+                <h3>合并模式</h3>
+                
+                <div class="mode-selector">
+                    <div class="mode-option">
+                        <input type="radio" id="replace_audio" name="mode" value="replace_audio" checked>
+                        <label for="replace_audio">
+                            <div class="mode-title">🔄 替换音轨</div>
+                            <div class="mode-desc">用TTS音轨替换原音轨（推荐）</div>
+                        </label>
+                    </div>
+
+                    <div class="mode-option">
+                        <input type="radio" id="mix_audio" name="mode" value="mix_audio">
+                        <label for="mix_audio">
+                            <div class="mode-title">🎵 混合音轨</div>
+                            <div class="mode-desc">保留原音并混合TTS配音</div>
+                        </label>
+                    </div>
+
+                    <div class="mode-option">
+                        <input type="radio" id="embed_subtitle" name="mode" value="embed_subtitle">
+                        <label for="embed_subtitle">
+                            <div class="mode-title">📝 嵌入字幕</div>
+                            <div class="mode-desc">将字幕作为软字幕嵌入</div>
+                        </label>
+                    </div>
+
+                    <div class="mode-option">
+                        <input type="radio" id="burn_subtitle" name="mode" value="burn_subtitle">
+                        <label for="burn_subtitle">
+                            <div class="mode-title">🔥 烧录字幕</div>
+                            <div class="mode-desc">将字幕烧录到画面（慢）</div>
+                        </label>
+                    </div>
+
+                    <div class="mode-option">
+                        <input type="radio" id="remove_audio" name="mode" value="remove_audio">
+                        <label for="remove_audio">
+                            <div class="mode-title">🔇 去除音轨</div>
+                            <div class="mode-desc">仅移除原视频音轨</div>
+                        </label>
+                    </div>
+
+                    <div class="mode-option">
+                        <input type="radio" id="video_only" name="mode" value="video_only">
+                        <label for="video_only">
+                            <div class="mode-title">📹 仅视频</div>
+                            <div class="mode-desc">提取纯视频流</div>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="checkbox-group">
+                    <input type="checkbox" id="removeOriginalAudio" name="removeOriginalAudio" checked>
+                    <label for="removeOriginalAudio">去除原始音轨（推荐）</label>
+                </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="action-section">
+                <button type="submit" class="merge-btn" id="mergeBtn">
+                    🚀 开始合并
+                </button>
+            </div>
+
+            <!-- 进度显示 -->
+            <div class="progress-section" id="progressSection">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p id="progressText">处理中...</p>
+            </div>
+
+            <!-- 结果显示 -->
+            <div class="result-section" id="resultSection">
+                <div id="resultContent"></div>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // 文件信息显示
+        function showFileInfo(input, infoDiv) {
+            const file = input.files[0];
+            if (file) {
+                const size = (file.size / 1024 / 1024).toFixed(2);
+                infoDiv.innerHTML = `📄 ${file.name} (${size} MB)`;
+                infoDiv.style.display = 'block';
+            } else {
+                infoDiv.style.display = 'none';
+            }
+        }
+
+        // 绑定文件选择事件
+        document.getElementById('videoFile').addEventListener('change', function() {
+            showFileInfo(this, document.getElementById('videoInfo'));
+        });
+
+        document.getElementById('audioFile').addEventListener('change', function() {
+            showFileInfo(this, document.getElementById('audioInfo'));
+        });
+
+        document.getElementById('subtitleFile').addEventListener('change', function() {
+            showFileInfo(this, document.getElementById('subtitleInfo'));
+        });
+
+        // 模式选择逻辑
+        document.querySelectorAll('input[name="mode"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const mode = this.value;
+                const audioFile = document.getElementById('audioFile');
+                const subtitleFile = document.getElementById('subtitleFile');
+                const removeOriginalAudio = document.getElementById('removeOriginalAudio');
+
+                // 根据模式调整必需文件
+                if (mode === 'remove_audio' || mode === 'video_only') {
+                    audioFile.required = false;
+                    subtitleFile.required = false;
+                } else if (mode === 'embed_subtitle' || mode === 'burn_subtitle') {
+                    subtitleFile.required = true;
+                    audioFile.required = false;
+                } else {
+                    audioFile.required = true;
+                    subtitleFile.required = false;
+                }
+
+                // 混合音轨模式不能去除原音轨
+                if (mode === 'mix_audio') {
+                    removeOriginalAudio.checked = false;
+                    removeOriginalAudio.disabled = true;
+                } else {
+                    removeOriginalAudio.disabled = false;
+                }
+            });
+        });
+
+        // 表单提交
+        document.getElementById('mergeForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const formData = new FormData();
+            const videoFile = document.getElementById('videoFile').files[0];
+            const audioFile = document.getElementById('audioFile').files[0];
+            const subtitleFile = document.getElementById('subtitleFile').files[0];
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            const removeOriginalAudio = document.getElementById('removeOriginalAudio').checked;
+
+            if (!videoFile) {
+                alert('请选择视频文件');
+                return;
+            }
+
+            // 根据模式验证必需文件
+            if ((mode === 'replace_audio' || mode === 'mix_audio') && !audioFile) {
+                alert('该模式需要选择音频文件');
+                return;
+            }
+
+            if ((mode === 'embed_subtitle' || mode === 'burn_subtitle') && !subtitleFile) {
+                alert('该模式需要选择字幕文件');
+                return;
+            }
+
+            // 添加文件到FormData
+            formData.append('video', videoFile);
+            if (audioFile) formData.append('audio', audioFile);
+            if (subtitleFile) formData.append('subtitle', subtitleFile);
+            formData.append('mode', mode);
+            formData.append('remove_original_audio', removeOriginalAudio);
+
+            // 显示进度
+            document.getElementById('progressSection').style.display = 'block';
+            document.getElementById('resultSection').style.display = 'none';
+            document.getElementById('mergeBtn').disabled = true;
+
+            try {
+                const response = await fetch('/api/merge_video', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showResult('success', `
+                        <h4>✅ 合并成功！</h4>
+                        <p>输出文件：${result.output_path}</p>
+                        <p>处理时间：${result.processing_time || '未知'}</p>
+                        <a href="/download/${result.filename}" class="download-btn">📥 下载文件</a>
+                    `);
+                } else {
+                    showResult('error', `
+                        <h4>❌ 合并失败</h4>
+                        <p>错误信息：${result.error}</p>
+                    `);
+                }
+            } catch (error) {
+                showResult('error', `
+                    <h4>❌ 网络错误</h4>
+                    <p>错误信息：${error.message}</p>
+                `);
+            } finally {
+                document.getElementById('progressSection').style.display = 'none';
+                document.getElementById('mergeBtn').disabled = false;
+            }
+        });
+
+        function showResult(type, content) {
+            const resultSection = document.getElementById('resultSection');
+            const resultContent = document.getElementById('resultContent');
+            
+            resultSection.className = `result-section result-${type}`;
+            resultContent.innerHTML = content;
+            resultSection.style.display = 'block';
+        }
+
+        // 模拟进度更新
+        function updateProgress() {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += Math.random() * 10;
+                if (progress >= 90) {
+                    progress = 90;
+                    clearInterval(interval);
+                }
+                
+                progressFill.style.width = progress + '%';
+                progressText.textContent = `处理中... ${Math.round(progress)}%`;
+            }, 500);
+        }
+    </script>
+</body>
+</html>
