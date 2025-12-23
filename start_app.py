@@ -23,6 +23,7 @@ src_dir = pathlib.Path(__file__).parent / "src"
 sys.path.insert(0, str(src_dir))
 
 print("🚀 启动重构后的应用...")
+print(f"Python路径已添加: {src_dir}")
 
 try:
     # 导入FastAPI相关模块
