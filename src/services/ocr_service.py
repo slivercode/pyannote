@@ -35,35 +35,66 @@ class OCRService:
             # 延迟导入PaddleOCR以避免启动时的依赖问题
             from paddleocr import PaddleOCR
             
-            # PaddleOCR 3.x 版本的初始化方式
+            # 检查GPU可用性
+            gpu_actually_available = False
+            if config.use_gpu:
+                try:
+                    import paddle
+                    gpu_actually_available = paddle.is_compiled_with_cuda()
+                    if not gpu_actually_available:
+                        print("⚠️ 用户请求GPU加速，但PaddlePaddle未编译CUDA支持")
+                        print("   将自动降级到CPU模式")
+                except Exception as e:
+                    print(f"⚠️ 无法检测GPU状态: {e}")
+                    print("   将使用CPU模式")
+            
+            # 根据实际情况决定是否使用GPU
+            use_gpu_final = config.use_gpu and gpu_actually_available
+            
+            # PaddleOCR 3.x 使用 device 参数而不是 use_gpu
+            # device='gpu' 表示使用GPU，device='cpu' 表示使用CPU
+            # 注意：3.x版本不支持 show_log 参数
             ocr_kwargs = {
                 'lang': config.language,
-                'use_gpu': config.use_gpu,  # PaddleOCR会根据环境自动判断是否能使用GPU
-                'show_log': True  # 显示日志以便查看GPU使用情况
+                'device': 'gpu' if use_gpu_final else 'cpu',
+                # ========== 性能优化参数 ==========
+                'rec_batch_num': 6,          # 每张图同时识别6个文本框（批处理）
+                'use_angle_cls': False,      # 禁用角度分类（字幕通常是水平的）
+                # ==================================
             }
             
+            print(f"\n{'='*60}")
             print(f"正在初始化OCR引擎...")
             print(f"  语言: {config.language}")
-            print(f"  GPU加速: {'启用' if config.use_gpu else '禁用'}")
+            print(f"  用户选择: {'GPU加速' if config.use_gpu else 'CPU模式'}")
+            print(f"  实际使用: {'GPU加速' if use_gpu_final else 'CPU模式'}")
+            
+            if config.use_gpu and not use_gpu_final:
+                print(f"  ⚠️ GPU不可用，已自动切换到CPU模式")
             
             self.ocr_engine = PaddleOCR(**ocr_kwargs)
             self.is_initialized = True
             
-            # 检测实际使用的设备
+            # 确认实际使用的设备
             try:
                 import paddle
-                if paddle.is_compiled_with_cuda() and config.use_gpu:
-                    print(f"✅ OCR引擎初始化成功，使用GPU加速")
+                if paddle.is_compiled_with_cuda() and use_gpu_final:
+                    print(f"✅ OCR引擎初始化成功 - 使用GPU加速")
                 else:
-                    print(f"✅ OCR引擎初始化成功，使用CPU模式")
+                    print(f"✅ OCR引擎初始化成功 - 使用CPU模式")
             except:
                 print(f"✅ OCR引擎初始化成功")
             
+            print(f"{'='*60}\n")
             return True
             
         except Exception as e:
+            print(f"\n{'='*60}")
             print(f"❌ OCR引擎初始化失败: {e}")
+            print(f"{'='*60}\n")
             import traceback
+            traceback.print_exc()
+            return False
             traceback.print_exc()
             return False
     
@@ -168,8 +199,17 @@ class OCRService:
             # 如果增强失败，返回原始帧
             return [frame]
     def extract_frames(self, video_path: str, subtitle_region: Optional[SubtitleRegion] = None, 
-                      interval: float = 1.0) -> List[Tuple[int, np.ndarray, float]]:
-        """提取视频帧用于OCR识别"""
+                      mode: str = "auto") -> List[Tuple[int, np.ndarray, float]]:
+        """
+        提取视频帧用于OCR识别 - 动态间隔版本
+        
+        根据识别模式动态调整帧提取策略：
+        - fast: 每秒提取1帧 (适合快速预览)
+        - auto/balanced: 每秒提取2帧 (平衡速度和准确度)
+        - precise: 每秒提取4帧 (最高精度)
+        
+        这样可以根据视频FPS自动适配，而不是固定间隔
+        """
         frames = []
         cap = cv2.VideoCapture(video_path)
         
@@ -179,10 +219,20 @@ class OCRService:
             
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        frame_interval = max(1, int(fps * interval))  # 根据配置的间隔提取帧
+        
+        # 根据模式动态计算帧间隔
+        if mode == "fast":
+            frames_per_second = 1  # 每秒1帧
+        elif mode == "precise":
+            frames_per_second = 4  # 每秒4帧
+        else:  # auto/balanced
+            frames_per_second = 2  # 每秒2帧
+        
+        frame_interval = max(1, int(fps / frames_per_second))
         frame_index = 0
         
-        print(f"视频信息: FPS={fps}, 总帧数={total_frames}, 提取间隔={frame_interval}帧 (每{interval}秒)")
+        print(f"视频信息: FPS={fps}, 总帧数={total_frames}")
+        print(f"识别模式: {mode}, 每秒提取{frames_per_second}帧, 帧间隔={frame_interval}")
         
         while True:
             ret, frame = cap.read()
@@ -376,7 +426,8 @@ class OCRService:
                 message="正在提取视频帧..."
             ))
         
-        frames = self.extract_frames(video_path, subtitle_region, interval=config.frame_interval)
+        # 使用识别模式动态提取帧，而不是固定间隔
+        frames = self.extract_frames(video_path, subtitle_region, mode=config.mode)
         total_frames = len(frames)
         
         if total_frames == 0:
@@ -532,29 +583,91 @@ class OCRService:
         return filtered_subtitles
     
     def _merge_continuous_subtitles(self, subtitles: List[SubtitleItem]) -> List[SubtitleItem]:
-        """合并连续的相同字幕"""
+        """
+        合并连续的相同字幕 - 精确时间轴版本
+        参考 video-subtitle-extractor 的实现
+        使用 Levenshtein 距离判断文本相似度
+        """
         if not subtitles:
             return subtitles
         
-        # 按时间排序
-        subtitles.sort(key=lambda x: x.start_time)
+        # 按帧索引排序（而不是时间）
+        subtitles.sort(key=lambda x: x.frame_index)
         
         merged_subtitles = []
-        current_subtitle = subtitles[0]
+        i = 0
         
-        for i in range(1, len(subtitles)):
-            next_subtitle = subtitles[i]
+        while i < len(subtitles):
+            current = subtitles[i]
+            start_time = current.start_time
+            start_frame = current.frame_index
             
-            # 如果文本相同且时间连续，则合并
-            if (current_subtitle.text == next_subtitle.text and 
-                abs(next_subtitle.start_time - current_subtitle.end_time) <= 2.0):
-                current_subtitle.end_time = next_subtitle.end_time
+            # 查找连续相同的字幕
+            j = i
+            similar_group = [current]  # 记录相似的字幕组
+            
+            while j < len(subtitles) - 1:
+                next_subtitle = subtitles[j + 1]
+                
+                # 使用文本相似度判断（去除空格后比较）
+                current_text = current.text.replace(' ', '').strip()
+                next_text = next_subtitle.text.replace(' ', '').strip()
+                
+                # 计算相似度（简单版本：完全相同或编辑距离很小）
+                similarity = self._calculate_text_similarity(current_text, next_text)
+                
+                # 如果相似度低于阈值，找到了结束点
+                if similarity < 0.8:  # 80%相似度阈值
+                    break
+                
+                # 相似，继续
+                similar_group.append(next_subtitle)
+                j += 1
+            
+            # 计算结束时间
+            if j < len(subtitles):
+                # 使用最后一个相似字幕的时间作为结束
+                end_time = subtitles[j].start_time
+                end_frame = subtitles[j].frame_index
             else:
-                merged_subtitles.append(current_subtitle)
-                current_subtitle = next_subtitle
+                # 最后一组字幕，使用最后一帧的时间+1秒
+                end_time = subtitles[j].start_time + 1.0
+                end_frame = subtitles[j].frame_index
+            
+            # 从相似组中选择最长的文本（最完整的识别结果）
+            best_text = max(similar_group, key=lambda x: len(x.text.replace(' ', ''))).text
+            best_confidence = max(similar_group, key=lambda x: x.confidence).confidence
+            
+            # 创建合并后的字幕
+            merged_subtitle = SubtitleItem(
+                start_time=start_time,
+                end_time=end_time,
+                text=best_text,
+                confidence=best_confidence,
+                frame_index=start_frame
+            )
+            merged_subtitles.append(merged_subtitle)
+            
+            # 移动到下一组
+            i = j + 1
         
-        merged_subtitles.append(current_subtitle)
         return merged_subtitles
+    
+    def _calculate_text_similarity(self, text1: str, text2: str) -> float:
+        """
+        计算两个文本的相似度
+        使用简化的 Levenshtein 距离算法
+        返回 0-1 之间的相似度值
+        """
+        if text1 == text2:
+            return 1.0
+        
+        if not text1 or not text2:
+            return 0.0
+        
+        # 使用 difflib 计算相似度（Python 标准库）
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, text1, text2).ratio()
     
     def export_srt(self, subtitles: List[SubtitleItem], output_path: str) -> bool:
         """导出SRT字幕文件"""
@@ -607,49 +720,26 @@ class OCRService:
             memory = psutil.virtual_memory()
             memory_usage = memory.percent
             
-            # 检查GPU - 优先使用PaddlePaddle的检测
+            # 检查GPU
             gpu_available = False
             gpu_memory_usage = None
             
-            # 方法1: 检查PaddlePaddle是否支持CUDA（最准确）
             try:
-                import paddle
-                if paddle.is_compiled_with_cuda():
+                import GPUtil
+                gpus = GPUtil.getGPUs()
+                if gpus:
                     gpu_available = True
-                    print("✅ 检测到PaddlePaddle支持CUDA，GPU加速可用")
+                    gpu_memory_usage = gpus[0].memoryUtil * 100
             except ImportError:
-                print("⚠️ PaddlePaddle未安装，尝试其他GPU检测方法")
-            except Exception as e:
-                print(f"⚠️ PaddlePaddle GPU检测失败: {e}")
-            
-            # 方法2: 使用GPUtil检测GPU
-            if not gpu_available:
-                try:
-                    import GPUtil
-                    gpus = GPUtil.getGPUs()
-                    if gpus:
-                        gpu_available = True
-                        gpu_memory_usage = gpus[0].memoryUtil * 100
-                        print(f"✅ 通过GPUtil检测到GPU: {gpus[0].name}")
-                except ImportError:
-                    pass
-                except Exception as e:
-                    print(f"⚠️ GPUtil检测失败: {e}")
-            
-            # 方法3: 使用PyTorch检测（备用）
-            if not gpu_available:
+                # GPUtil 不可用，尝试其他方法检测GPU
                 try:
                     import torch
                     if torch.cuda.is_available():
                         gpu_available = True
-                        print(f"✅ 通过PyTorch检测到GPU")
                 except ImportError:
                     pass
-                except Exception as e:
-                    print(f"⚠️ PyTorch检测失败: {e}")
-            
-            if not gpu_available:
-                print("ℹ️ 未检测到可用GPU，将使用CPU模式")
+            except Exception:
+                pass
             
             # 磁盘空间
             try:
@@ -666,7 +756,7 @@ class OCRService:
                 disk_space=disk_space
             )
         except Exception as e:
-            print(f"❌ 获取系统资源信息失败: {e}")
+            print(f"获取系统资源信息失败: {e}")
             return SystemResourceInfo(
                 cpu_usage=0,
                 memory_usage=0,

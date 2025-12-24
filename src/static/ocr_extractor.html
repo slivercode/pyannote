@@ -124,39 +124,15 @@
                     </div>
                 </div>
 
-                <!-- 帧提取间隔 -->
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">
-                        提取间隔: {{ ocrConfig.frame_interval }}秒
-                    </label>
-                    <input type="range" v-model.number="ocrConfig.frame_interval" 
-                           min="0.5" max="5.0" step="0.5" 
-                           class="w-full">
-                    <div class="text-xs text-gray-500 mt-1">
-                        间隔越小识别越精细，但处理时间越长
-                    </div>
-                </div>
-
                 <!-- GPU 加速 -->
-                <div>
-                    <div class="flex items-center">
-                        <input type="checkbox" v-model="ocrConfig.use_gpu" 
-                               :disabled="!systemInfo.gpu_available"
-                               class="mr-2">
-                        <label class="text-sm font-medium text-gray-700">
-                            GPU 加速 
-                            <span v-if="!systemInfo.gpu_available" class="text-red-500">(不可用)</span>
-                            <span v-else class="text-green-600">(可用)</span>
-                        </label>
-                    </div>
-                    <div class="text-xs text-gray-500 mt-1">
-                        <span v-if="!systemInfo.gpu_available">
-                            需要安装支持CUDA的PaddlePaddle版本
-                        </span>
-                        <span v-else>
-                            GPU加速可显著提升处理速度
-                        </span>
-                    </div>
+                <div class="flex items-center">
+                    <input type="checkbox" v-model="ocrConfig.use_gpu" 
+                           :disabled="!systemInfo.gpu_available"
+                           class="mr-2">
+                    <label class="text-sm font-medium text-gray-700">
+                        GPU 加速 
+                        <span v-if="!systemInfo.gpu_available" class="text-gray-400">(不可用)</span>
+                    </label>
                 </div>
 
                 <!-- 去除重复 -->
@@ -182,17 +158,17 @@
                     <button @click="applyPreset('fast')" 
                             class="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 text-sm">
                         <i class="fas fa-bolt mr-1"></i>
-                        快速模式 (2秒间隔)
+                        快速模式
                     </button>
                     <button @click="applyPreset('balanced')" 
                             class="px-4 py-2 bg-green-100 text-green-700 rounded-md hover:bg-green-200 text-sm">
                         <i class="fas fa-balance-scale mr-1"></i>
-                        平衡模式 (1秒间隔)
+                        平衡模式
                     </button>
                     <button @click="applyPreset('precise')" 
                             class="px-4 py-2 bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 text-sm">
                         <i class="fas fa-crosshairs mr-1"></i>
-                        精准模式 (0.5秒间隔)
+                        精准模式
                     </button>
                 </div>
                 <div class="text-xs text-gray-500 mt-2">
@@ -367,8 +343,8 @@
                         use_gpu: true,
                         confidence_threshold: 0.3,
                         remove_duplicates: true,
-                        filter_watermark: false,  // 默认关闭水印过滤，避免误判
-                        frame_interval: 1.0  // 默认每1秒提取一帧
+                        filter_watermark: false  // 默认关闭水印过滤，避免误判
+                        // frame_interval 已移除 - 现在基于视频FPS和mode动态提取帧
                     },
                     subtitleRegion: {
                         x: 0,
@@ -397,21 +373,21 @@
             
             methods: {
                 applyPreset(preset) {
-                    // 应用快速预设配置
+                    // 应用快速预设配置 - 只调整置信度阈值和模式
                     switch(preset) {
                         case 'fast':
                             // 快速模式：处理快，可能漏字幕
-                            this.ocrConfig.frame_interval = 2.0;
+                            this.ocrConfig.mode = 'fast';
                             this.ocrConfig.confidence_threshold = 0.5;
                             break;
                         case 'balanced':
                             // 平衡模式：速度和准确度平衡
-                            this.ocrConfig.frame_interval = 1.0;
+                            this.ocrConfig.mode = 'auto';
                             this.ocrConfig.confidence_threshold = 0.3;
                             break;
                         case 'precise':
                             // 精准模式：识别全，处理慢
-                            this.ocrConfig.frame_interval = 0.5;
+                            this.ocrConfig.mode = 'precise';
                             this.ocrConfig.confidence_threshold = 0.2;
                             break;
                     }
