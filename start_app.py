@@ -144,6 +144,10 @@ try:
     app.include_router(video_merger_router.router)
     app.include_router(tts_routes.router)
     app.include_router(config_management.router)
+    
+    # 导入并注册OCR路由
+    from routers import ocr_routes
+    app.include_router(ocr_routes.router)
 
     # 根路径路由
     @app.get("/", summary="默认首页：重定向到静态页面")

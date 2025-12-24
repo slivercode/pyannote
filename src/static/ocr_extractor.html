@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR 字幕提取工具</title>
+    <link rel="stylesheet" href="font-awesome.min.css">
+    <script src="tailwindcss.js"></script>
+    <script src="vue.global.prod.js"></script>
+    <script src="axios.min.js"></script>
+</head>
+<body class="bg-gray-100">
+    <div id="app" class="container mx-auto px-4 py-8">
+        <!-- 页面标题 -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                <i class="fas fa-eye text-blue-600"></i>
+                OCR 字幕提取工具
+            </h1>
+            <p class="text-gray-600">从视频中提取硬字幕并生成 SRT 文件</p>
+        </div>
+
+        <!-- 系统资源信息 -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">
+                <i class="fas fa-server text-green-600"></i>
+                系统状态
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600">{{ systemInfo.cpu_usage.toFixed(1) }}%</div>
+                    <div class="text-sm text-gray-600">CPU 使用率</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600">{{ systemInfo.memory_usage.toFixed(1) }}%</div>
+                    <div class="text-sm text-gray-600">内存使用率</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold" :class="systemInfo.gpu_available ? 'text-purple-600' : 'text-gray-400'">
+                        {{ systemInfo.gpu_available ? 'GPU 可用' : 'GPU 不可用' }}
+                    </div>
+                    <div class="text-sm text-gray-600">GPU 状态</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-orange-600">{{ systemInfo.disk_space.toFixed(1) }}GB</div>
+                    <div class="text-sm text-gray-600">可用空间</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 视频上传区域 -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">
+                <i class="fas fa-upload text-blue-600"></i>
+                视频文件上传
+            </h2>
+            
+            <div v-if="!videoInfo" class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                <input type="file" ref="fileInput" @change="handleFileUpload" accept="video/*" class="hidden">
+                <div class="cursor-pointer" @click="$refs.fileInput.click()">
+                    <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-4"></i>
+                    <p class="text-lg text-gray-600 mb-2">点击选择视频文件</p>
+                    <p class="text-sm text-gray-500">支持 MP4, AVI, MOV, MKV 等格式，最大 500MB</p>
+                </div>
+            </div>
+
+            <!-- 视频信息显示 -->
+            <div v-if="videoInfo" class="bg-gray-50 rounded-lg p-4">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <h3 class="font-semibold text-lg">{{ videoInfo.filename }}</h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2 text-sm text-gray-600">
+                            <div>时长: {{ formatDuration(videoInfo.duration) }}</div>
+                            <div>分辨率: {{ videoInfo.width }}x{{ videoInfo.height }}</div>
+                            <div>帧率: {{ videoInfo.fps.toFixed(1) }} fps</div>
+                            <div>大小: {{ formatFileSize(videoInfo.size) }}</div>
+                        </div>
+                    </div>
+                    <button @click="resetUpload" class="text-red-600 hover:text-red-800">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- OCR 配置 -->
+        <div v-if="videoInfo" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">
+                <i class="fas fa-cog text-purple-600"></i>
+                OCR 配置
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- 识别语言 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">识别语言</label>
+                    <select v-model="ocrConfig.language" class="w-full border border-gray-300 rounded-md px-3 py-2">
+                        <option v-for="(name, code) in supportedLanguages" :key="code" :value="code">
+                            {{ name }}
+                        </option>
+                    </select>
+                </div>
+
+                <!-- 识别模式 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">识别模式</label>
+                    <select v-model="ocrConfig.mode" class="w-full border border-gray-300 rounded-md px-3 py-2">
+                        <option value="fast">快速模式</option>
+                        <option value="auto">自动模式</option>
+                        <option value="precise">精准模式</option>
+                    </select>
+                </div>
+
+                <!-- 置信度阈值 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        置信度阈值: {{ ocrConfig.confidence_threshold }}
+                    </label>
+                    <input type="range" v-model.number="ocrConfig.confidence_threshold" 
+                           min="0.1" max="1.0" step="0.1" 
+                           class="w-full">
+                    <div class="text-xs text-gray-500 mt-1">
+                        越低识别越多，但可能有误识别
+                    </div>
+                </div>
+
+                <!-- 帧提取间隔 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        提取间隔: {{ ocrConfig.frame_interval }}秒
+                    </label>
+                    <input type="range" v-model.number="ocrConfig.frame_interval" 
+                           min="0.5" max="5.0" step="0.5" 
+                           class="w-full">
+                    <div class="text-xs text-gray-500 mt-1">
+                        间隔越小识别越精细，但处理时间越长
+                    </div>
+                </div>
+
+                <!-- GPU 加速 -->
+                <div>
+                    <div class="flex items-center">
+                        <input type="checkbox" v-model="ocrConfig.use_gpu" 
+                               :disabled="!systemInfo.gpu_available"
+                               class="mr-2">
+                        <label class="text-sm font-medium text-gray-700">
+                            GPU 加速 
+                            <span v-if="!systemInfo.gpu_available" class="text-red-500">(不可用)</span>
+                            <span v-else class="text-green-600">(可用)</span>
+                        </label>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1">
+                        <span v-if="!systemInfo.gpu_available">
+                            需要安装支持CUDA的PaddlePaddle版本
+                        </span>
+                        <span v-else>
+                            GPU加速可显著提升处理速度
+                        </span>
+                    </div>
+                </div>
+
+                <!-- 去除重复 -->
+                <div class="flex items-center">
+                    <input type="checkbox" v-model="ocrConfig.remove_duplicates" class="mr-2">
+                    <label class="text-sm font-medium text-gray-700">去除重复字幕</label>
+                </div>
+
+                <!-- 过滤水印 -->
+                <div class="flex items-center">
+                    <input type="checkbox" v-model="ocrConfig.filter_watermark" class="mr-2">
+                    <label class="text-sm font-medium text-gray-700">过滤水印文本</label>
+                </div>
+            </div>
+
+            <!-- 快速预设 -->
+            <div class="mt-6 pt-6 border-t border-gray-200">
+                <h3 class="text-sm font-semibold text-gray-700 mb-3">
+                    <i class="fas fa-magic text-purple-600"></i>
+                    快速预设
+                </h3>
+                <div class="flex flex-wrap gap-2">
+                    <button @click="applyPreset('fast')" 
+                            class="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 text-sm">
+                        <i class="fas fa-bolt mr-1"></i>
+                        快速模式 (2秒间隔)
+                    </button>
+                    <button @click="applyPreset('balanced')" 
+                            class="px-4 py-2 bg-green-100 text-green-700 rounded-md hover:bg-green-200 text-sm">
+                        <i class="fas fa-balance-scale mr-1"></i>
+                        平衡模式 (1秒间隔)
+                    </button>
+                    <button @click="applyPreset('precise')" 
+                            class="px-4 py-2 bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 text-sm">
+                        <i class="fas fa-crosshairs mr-1"></i>
+                        精准模式 (0.5秒间隔)
+                    </button>
+                </div>
+                <div class="text-xs text-gray-500 mt-2">
+                    快速模式处理快但可能漏字幕，精准模式识别全但处理慢
+                </div>
+            </div>
+        </div>
+
+        <!-- 字幕区域选择 -->
+        <div v-if="videoInfo" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">
+                <i class="fas fa-crop text-orange-600"></i>
+                字幕区域选择
+            </h2>
+            <div class="text-sm text-gray-600 mb-4">
+                可选择视频中字幕通常出现的区域，提高识别准确性。如不选择将使用默认的下方区域。
+            </div>
+            
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">X 坐标</label>
+                    <input type="number" v-model.number="subtitleRegion.x" 
+                           class="w-full border border-gray-300 rounded-md px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Y 坐标</label>
+                    <input type="number" v-model.number="subtitleRegion.y" 
+                           class="w-full border border-gray-300 rounded-md px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">宽度</label>
+                    <input type="number" v-model.number="subtitleRegion.width" 
+                           class="w-full border border-gray-300 rounded-md px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">高度</label>
+                    <input type="number" v-model.number="subtitleRegion.height" 
+                           class="w-full border border-gray-300 rounded-md px-3 py-2">
+                </div>
+            </div>
+            
+            <button @click="useDefaultRegion" class="mt-4 bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600">
+                使用默认区域
+            </button>
+        </div>
+
+        <!-- 开始处理按钮 -->
+        <div v-if="videoInfo && !currentTask" class="text-center mb-6">
+            <button @click="startOCRExtraction" 
+                    class="bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-semibold hover:bg-blue-700 transition-colors">
+                <i class="fas fa-play mr-2"></i>
+                开始提取字幕
+            </button>
+        </div>
+
+        <!-- 处理进度 -->
+        <div v-if="currentTask" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">
+                <i class="fas fa-spinner fa-spin text-blue-600"></i>
+                处理进度
+            </h2>
+            
+            <div class="mb-4">
+                <div class="flex justify-between text-sm text-gray-600 mb-1">
+                    <span>{{ currentTask.progress.message }}</span>
+                    <span>{{ currentTask.progress.progress.toFixed(1) }}%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2">
+                    <div class="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                         :style="{ width: currentTask.progress.progress + '%' }"></div>
+                </div>
+            </div>
+            
+            <div v-if="currentTask.progress.total_frames > 0" class="text-sm text-gray-600">
+                处理帧数: {{ currentTask.progress.current_frame }} / {{ currentTask.progress.total_frames }}
+            </div>
+            
+            <button @click="cancelTask" class="mt-4 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700">
+                <i class="fas fa-stop mr-2"></i>
+                取消任务
+            </button>
+        </div>
+
+        <!-- 提取结果 -->
+        <div v-if="extractionResult" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">
+                <i class="fas fa-check-circle text-green-600"></i>
+                提取结果
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600">{{ extractionResult.subtitles.length }}</div>
+                    <div class="text-sm text-gray-600">字幕条数</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600">{{ extractionResult.processing_time.toFixed(1) }}s</div>
+                    <div class="text-sm text-gray-600">处理时间</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600">{{ formatDuration(extractionResult.total_duration) }}</div>
+                    <div class="text-sm text-gray-600">视频时长</div>
+                </div>
+            </div>
+
+            <!-- 下载按钮 -->
+            <div class="flex gap-4 mb-6">
+                <button @click="downloadSRT" class="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700">
+                    <i class="fas fa-download mr-2"></i>
+                    下载 SRT 文件
+                </button>
+                <button @click="downloadTXT" class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700">
+                    <i class="fas fa-download mr-2"></i>
+                    下载 TXT 文件
+                </button>
+            </div>
+
+            <!-- 字幕列表 -->
+            <div class="max-h-96 overflow-y-auto">
+                <h3 class="font-semibold mb-2">字幕内容预览:</h3>
+                <div v-for="(subtitle, index) in extractionResult.subtitles" :key="index" 
+                     class="border-b border-gray-200 py-2">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1">
+                            <div class="text-sm text-gray-600">
+                                {{ formatTime(subtitle.start_time) }} --> {{ formatTime(subtitle.end_time) }}
+                            </div>
+                            <div class="mt-1" :class="subtitle.is_watermark ? 'text-red-600 line-through' : ''">
+                                {{ subtitle.text }}
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                置信度: {{ (subtitle.confidence * 100).toFixed(1) }}%
+                                <span v-if="subtitle.is_watermark" class="text-red-600 ml-2">[疑似水印]</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 错误信息 -->
+        <div v-if="errorMessage" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+            <div class="flex items-center">
+                <i class="fas fa-exclamation-triangle mr-2"></i>
+                <span>{{ errorMessage }}</span>
+                <button @click="errorMessage = ''" class="ml-auto text-red-700 hover:text-red-900">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    videoInfo: null,
+                    uploadedFilename: '',
+                    systemInfo: {
+                        cpu_usage: 0,
+                        memory_usage: 0,
+                        gpu_available: false,
+                        gpu_memory_usage: null,
+                        disk_space: 0
+                    },
+                    supportedLanguages: {},
+                    ocrConfig: {
+                        language: 'ch',
+                        mode: 'auto',
+                        use_gpu: true,
+                        confidence_threshold: 0.3,
+                        remove_duplicates: true,
+                        filter_watermark: false,  // 默认关闭水印过滤，避免误判
+                        frame_interval: 1.0  // 默认每1秒提取一帧
+                    },
+                    subtitleRegion: {
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0
+                    },
+                    currentTask: null,
+                    lastCompletedTaskId: null,  // 添加这个变量
+                    extractionResult: null,
+                    errorMessage: '',
+                    pollInterval: null
+                }
+            },
+            
+            async mounted() {
+                await this.loadSystemInfo();
+                await this.loadSupportedLanguages();
+            },
+            
+            beforeUnmount() {
+                if (this.pollInterval) {
+                    clearInterval(this.pollInterval);
+                }
+            },
+            
+            methods: {
+                applyPreset(preset) {
+                    // 应用快速预设配置
+                    switch(preset) {
+                        case 'fast':
+                            // 快速模式：处理快，可能漏字幕
+                            this.ocrConfig.frame_interval = 2.0;
+                            this.ocrConfig.confidence_threshold = 0.5;
+                            break;
+                        case 'balanced':
+                            // 平衡模式：速度和准确度平衡
+                            this.ocrConfig.frame_interval = 1.0;
+                            this.ocrConfig.confidence_threshold = 0.3;
+                            break;
+                        case 'precise':
+                            // 精准模式：识别全，处理慢
+                            this.ocrConfig.frame_interval = 0.5;
+                            this.ocrConfig.confidence_threshold = 0.2;
+                            break;
+                    }
+                },
+                
+                async loadSystemInfo() {
+                    try {
+                        const response = await axios.get('/api/ocr/system-info');
+                        this.systemInfo = response.data;
+                        this.ocrConfig.use_gpu = this.systemInfo.gpu_available;
+                    } catch (error) {
+                        console.error('加载系统信息失败:', error);
+                    }
+                },
+                
+                async loadSupportedLanguages() {
+                    try {
+                        const response = await axios.get('/api/ocr/languages');
+                        this.supportedLanguages = response.data;
+                    } catch (error) {
+                        console.error('加载语言列表失败:', error);
+                    }
+                },
+                
+                async handleFileUpload(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    try {
+                        const response = await axios.post('/api/ocr/upload-video', formData, {
+                            headers: { 'Content-Type': 'multipart/form-data' }
+                        });
+                        
+                        this.videoInfo = response.data.video_info;
+                        this.uploadedFilename = response.data.filename;
+                        this.useDefaultRegion();
+                        
+                    } catch (error) {
+                        this.errorMessage = error.response?.data?.detail || '文件上传失败';
+                    }
+                },
+                
+                resetUpload() {
+                    this.videoInfo = null;
+                    this.uploadedFilename = '';
+                    this.currentTask = null;
+                    this.lastCompletedTaskId = null;
+                    this.extractionResult = null;
+                    this.$refs.fileInput.value = '';
+                },
+                
+                useDefaultRegion() {
+                    if (this.videoInfo) {
+                        this.subtitleRegion = {
+                            x: 0,
+                            y: Math.floor(this.videoInfo.height * 0.75),
+                            width: this.videoInfo.width,
+                            height: Math.floor(this.videoInfo.height * 0.25)
+                        };
+                    }
+                },
+                
+                async startOCRExtraction() {
+                    if (!this.uploadedFilename) return;
+                    
+                    const request = {
+                        video_file: this.uploadedFilename,
+                        config: this.ocrConfig,
+                        subtitle_region: this.subtitleRegion.width > 0 ? this.subtitleRegion : null
+                    };
+                    
+                    try {
+                        const response = await axios.post('/api/ocr/extract', request);
+                        this.currentTask = response.data;
+                        this.startPolling();
+                        
+                    } catch (error) {
+                        this.errorMessage = error.response?.data?.detail || 'OCR任务启动失败';
+                    }
+                },
+                
+                startPolling() {
+                    this.pollInterval = setInterval(async () => {
+                        if (!this.currentTask) return;
+                        
+                        try {
+                            const response = await axios.get(`/api/ocr/tasks/${this.currentTask.task_id}`);
+                            this.currentTask = response.data;
+                            
+                            if (this.currentTask.status === 'completed') {
+                                this.extractionResult = this.currentTask.result;
+                                this.lastCompletedTaskId = this.currentTask.task_id;  // 保存task_id
+                                clearInterval(this.pollInterval);
+                            } else if (this.currentTask.status === 'failed') {
+                                this.errorMessage = this.currentTask.error || 'OCR处理失败';
+                                clearInterval(this.pollInterval);
+                            }
+                            
+                        } catch (error) {
+                            console.error('轮询任务状态失败:', error);
+                        }
+                    }, 2000);
+                },
+                
+                async cancelTask() {
+                    if (!this.currentTask) return;
+                    
+                    try {
+                        await axios.delete(`/api/ocr/tasks/${this.currentTask.task_id}`);
+                        this.currentTask = null;
+                        clearInterval(this.pollInterval);
+                        
+                    } catch (error) {
+                        console.error('取消任务失败:', error);
+                    }
+                },
+                
+                async downloadSRT() {
+                    if (!this.currentTask?.task_id && !this.extractionResult) return;
+                    
+                    const taskId = this.currentTask?.task_id || this.lastCompletedTaskId;
+                    window.open(`/api/ocr/tasks/${taskId}/download/srt`);
+                },
+                
+                async downloadTXT() {
+                    if (!this.currentTask?.task_id && !this.extractionResult) return;
+                    
+                    const taskId = this.currentTask?.task_id || this.lastCompletedTaskId;
+                    window.open(`/api/ocr/tasks/${taskId}/download/txt`);
+                },
+                
+                formatDuration(seconds) {
+                    const hours = Math.floor(seconds / 3600);
+                    const minutes = Math.floor((seconds % 3600) / 60);
+                    const secs = Math.floor(seconds % 60);
+                    
+                    if (hours > 0) {
+                        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                    }
+                    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+                },
+                
+                formatTime(seconds) {
+                    const hours = Math.floor(seconds / 3600);
+                    const minutes = Math.floor((seconds % 3600) / 60);
+                    const secs = Math.floor(seconds % 60);
+                    const ms = Math.floor((seconds % 1) * 1000);
+                    
+                    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`;
+                },
+                
+                formatFileSize(bytes) {
+                    const sizes = ['B', 'KB', 'MB', 'GB'];
+                    if (bytes === 0) return '0 B';
+                    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+                    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
