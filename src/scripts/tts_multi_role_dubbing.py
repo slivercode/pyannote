@@ -403,9 +403,9 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                             last_end_time += natural_pause
                     else:
                         # 保留时间轴模式：添加完整的静音间隙
-                        print(f"  ⏸️  添加静音: {silence_duration}ms")
+                        print(f"  ⏸️  添加原始间隙: {silence_duration}ms")
                         audio_segments.append(self.create_silence(silence_duration))
-                        last_end_time += silence_duration
+                        last_end_time = start_ms
                 
                 # 加载音频
                 audio = AudioSegment.from_wav(subtitle_info['audio_file'])
@@ -425,11 +425,19 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                 audio_segments.append(audio)
                 last_end_time += len(audio)
                 
-                # 添加字幕间隔静音（仅在不移除静音间隙时）
+                # 添加字幕间隔静音（仅在没有原始间隙时）
                 if not self.remove_silent_gaps and i < len(subtitle_data) - 1:
-                    silence_ms = int(self.silence_duration * 1000)
-                    audio_segments.append(self.create_silence(silence_ms))
-                    last_end_time += silence_ms
+                    # 检查下一条字幕是否有原始间隙
+                    next_subtitle = subtitle_data[i + 1]
+                    next_start_ms = next_subtitle['start_ms']
+                    
+                    if next_start_ms <= end_ms:
+                        # 没有原始间隙，添加静音间隔
+                        silence_ms = int(self.silence_duration * 1000)
+                        audio_segments.append(self.create_silence(silence_ms))
+                        last_end_time += silence_ms
+                        print(f"  ⏸️  添加字幕间隔静音: {silence_ms}ms")
+                    # 如果有原始间隙，会在下一次循环开始时添加
             
             # 拼接所有音频
             if not audio_segments:
@@ -446,13 +454,19 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
             final_audio.export(output_path, format="wav")
             output_path = str(output_path)
             
-            # 生成精确字幕（方案B - 基于实际音频片段时长）
+            # 生成字幕文件
             updated_srt_path = None
             if self.remove_silent_gaps:
-                # 使用方案B：基于每个片段的实际时长生成精确字幕
+                # 方案B：基于实际音频片段时长生成精确字幕（移除间隙）
                 updated_srt_path = self._generate_precise_subtitle_from_segments(
                     subtitle_data,
                     min_gap_ms=300  # 片段之间保留300ms间隙
+                )
+            else:
+                # 方案D：传统模式 - 根据实际拼接的音频生成字幕
+                updated_srt_path = self._generate_traditional_subtitle(
+                    subtitle_data,
+                    silence_duration_ms=int(self.silence_duration * 1000)
                 )
         
         print(f"PROGRESS:90%")

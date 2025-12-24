@@ -610,6 +610,7 @@ class TTSDubbingProcessor:
                     silence_duration = start_ms - last_end_time
                     print(f"  ⏸️  添加静音: {silence_duration}ms")
                     audio_segments.append(self.create_silence(silence_duration))
+                    last_end_time = start_ms
                 
                 # 加载音频
                 audio = AudioSegment.from_wav(subtitle_info['audio_file'])
@@ -629,13 +630,21 @@ class TTSDubbingProcessor:
                         audio = audio + self.create_silence(padding)
                 
                 audio_segments.append(audio)
-                last_end_time = end_ms
+                last_end_time += len(audio)
                 
-                # 添加字幕间隔静音
+                # 添加字幕间隔静音（仅在没有原始间隙时）
                 if i < total_subtitles - 1:
-                    silence_ms = int(self.silence_duration * 1000)
-                    audio_segments.append(self.create_silence(silence_ms))
-                    last_end_time += silence_ms
+                    # 检查下一条字幕是否有原始间隙
+                    next_subtitle = subtitle_data[i + 1]
+                    next_start_ms = next_subtitle['start_ms']
+                    
+                    if next_start_ms <= end_ms:
+                        # 没有原始间隙，添加静音间隔
+                        silence_ms = int(self.silence_duration * 1000)
+                        audio_segments.append(self.create_silence(silence_ms))
+                        last_end_time += silence_ms
+                        print(f"  ⏸️  添加字幕间隔静音: {silence_ms}ms")
+                    # 如果有原始间隙，会在下一次循环开始时添加
             
             # 拼接所有音频
             if not audio_segments:
@@ -652,13 +661,20 @@ class TTSDubbingProcessor:
             final_audio.export(output_path, format="wav")
             output_path = str(output_path)
             
-            # 生成精确字幕（方案B - 基于实际音频片段时长）
+            # 生成字幕文件
             updated_srt_path = None
             if self.remove_silent_gaps:
-                # 使用方案B：基于每个片段的实际时长生成精确字幕
+                # 方案B：基于实际音频片段时长生成精确字幕（移除间隙）
                 updated_srt_path = self._generate_precise_subtitle_from_segments(
                     subtitle_data,
                     min_gap_ms=300  # 片段之间保留300ms间隙
+                )
+            else:
+                # 方案D：传统模式 - 根据实际拼接的音频生成字幕
+                # 考虑语速调整和静音间隔
+                updated_srt_path = self._generate_traditional_subtitle(
+                    subtitle_data,
+                    silence_duration_ms=int(self.silence_duration * 1000)
                 )
         
         # 6. 清理临时文件
@@ -1065,6 +1081,132 @@ class TTSDubbingProcessor:
         print(f"\n✅ 字幕时间轴调整完成:")
         print(f"   调整后总时长: {final_duration_ms/1000:.2f}秒 ({final_duration_ms}ms)")
         print(f"   与音频差异: {abs(final_duration_ms - audio_duration_ms)}ms")
+        print(f"   保存位置: {output_srt}")
+        
+        return str(output_srt)
+    
+    def _generate_traditional_subtitle(self, subtitle_data, silence_duration_ms=500):
+        """
+        传统模式：根据实际音频拼接逻辑生成字幕文件（方案D）
+        
+        这个方法完全模拟音频拼接的逻辑，确保字幕和音频完全同步：
+        1. 添加原始间隙（如果有）
+        2. 添加音频片段
+        3. 仅在没有原始间隙时添加静音间隔
+        
+        Args:
+            subtitle_data: 字幕数据列表，每项包含 text, actual_duration_ms, start_ms, end_ms 等
+            silence_duration_ms: 字幕间的静音间隔（毫秒），默认500ms
+            
+        Returns:
+            str: 生成的字幕文件路径
+        """
+        print(f"\n🎯 生成传统模式字幕（方案D）:")
+        print(f"   字幕数量: {len(subtitle_data)}")
+        print(f"   静音间隔: {silence_duration_ms}ms")
+        print(f"   自动对齐: {self.auto_align}")
+        
+        # 累积计算每条字幕的新时间轴（完全模拟音频拼接逻辑）
+        traditional_subtitles = []
+        last_end_time = 0  # 使用与音频拼接相同的变量名
+        
+        for i, segment in enumerate(subtitle_data):
+            # 获取原始时间信息
+            original_start_ms = segment['start_ms']
+            original_end_ms = segment['end_ms']
+            original_duration_ms = original_end_ms - original_start_ms
+            
+            # 获取实际音频时长
+            actual_duration_ms = segment.get('actual_duration_ms', original_duration_ms)
+            
+            # 如果启用了自动对齐，音频会被调整到原始时长
+            if self.auto_align:
+                # 自动对齐模式：音频已经被调整到原始时长
+                final_duration_ms = original_duration_ms
+            else:
+                # 非自动对齐模式：使用实际音频时长
+                final_duration_ms = actual_duration_ms
+            
+            # 步骤1：添加字幕前的静音（模拟音频拼接逻辑）
+            if original_start_ms > last_end_time:
+                silence_before = original_start_ms - last_end_time
+                last_end_time = original_start_ms
+                if i < 5:
+                    print(f"   字幕{i+1}前添加原始间隙: {silence_before}ms")
+            
+            # 步骤2：计算字幕的开始和结束时间
+            new_start_ms = last_end_time
+            new_end_ms = last_end_time + final_duration_ms
+            
+            traditional_subtitles.append({
+                'index': i + 1,
+                'start_ms': new_start_ms,
+                'end_ms': new_end_ms,
+                'text': segment['text'],
+                'speaker': segment.get('speaker', None),
+                'original_start_ms': original_start_ms,
+                'original_end_ms': original_end_ms,
+                'original_duration_ms': original_duration_ms,
+                'actual_duration_ms': actual_duration_ms,
+                'final_duration_ms': final_duration_ms
+            })
+            
+            # 更新last_end_time
+            last_end_time = new_end_ms
+            
+            # 步骤3：添加字幕间隔静音（仅在没有原始间隙时）
+            if i < len(subtitle_data) - 1:
+                next_segment = subtitle_data[i + 1]
+                next_start_ms = next_segment['start_ms']
+                
+                if next_start_ms <= original_end_ms:
+                    # 没有原始间隙，添加静音间隔
+                    last_end_time += silence_duration_ms
+                    if i < 5:
+                        print(f"   字幕{i+1}后添加静音间隔: {silence_duration_ms}ms")
+                # 如果有原始间隙，会在下一次循环的步骤1中添加
+            
+            # 打印调整信息（前5条）
+            if i < 5:
+                if self.auto_align:
+                    print(f"   字幕{i+1}: {original_start_ms}ms → {new_start_ms}ms, "
+                          f"时长保持 {final_duration_ms}ms (自动对齐)")
+                else:
+                    print(f"   字幕{i+1}: {original_start_ms}ms → {new_start_ms}ms, "
+                          f"时长 {original_duration_ms}ms → {final_duration_ms}ms")
+        
+        # 保存字幕
+        output_srt = self.output_dir / "traditional_subtitles.srt"
+        
+        with open(output_srt, 'w', encoding='utf-8') as f:
+            for subtitle in traditional_subtitles:
+                f.write(f"{subtitle['index']}\n")
+                
+                # 转换毫秒为SRT时间格式
+                start_time = self._ms_to_srt_time(subtitle['start_ms'])
+                end_time = self._ms_to_srt_time(subtitle['end_ms'])
+                
+                f.write(f"{start_time} --> {end_time}\n")
+                
+                # 如果有说话人标记，保留它
+                if subtitle['speaker']:
+                    f.write(f"[{subtitle['speaker']}] {subtitle['text']}\n\n")
+                else:
+                    f.write(f"{subtitle['text']}\n\n")
+        
+        # 统计信息
+        total_subtitle_duration = sum(s['final_duration_ms'] for s in traditional_subtitles)
+        final_duration = last_end_time  # 使用last_end_time作为最终时长
+        total_gaps = final_duration - total_subtitle_duration
+        
+        original_total_duration = subtitle_data[-1]['end_ms'] if subtitle_data else 0
+        
+        print(f"\n✅ 传统模式字幕生成完成:")
+        print(f"   原始SRT总时长: {original_total_duration/1000:.2f}秒 ({original_total_duration}ms)")
+        print(f"   字幕总时长: {total_subtitle_duration/1000:.2f}秒 ({total_subtitle_duration}ms)")
+        print(f"   间隙总时长: {total_gaps/1000:.2f}秒 ({total_gaps}ms)")
+        print(f"   最终总时长: {final_duration/1000:.2f}秒 ({final_duration}ms)")
+        print(f"   时长变化: {(final_duration - original_total_duration)/1000:+.2f}秒")
         print(f"   保存位置: {output_srt}")
         
         return str(output_srt)
