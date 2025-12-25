@@ -93,6 +93,13 @@
         >
           <i class="fas fa-eye mr-1"></i>OCR字幕提取
         </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          :class="{ 'text-primary border-b-2 border-primary': activeTab === 'video-sync' }"
+          @click="activeTab = 'video-sync'"
+        >
+          <i class="fas fa-sync-alt mr-1"></i>视频同步
+        </div>
         <div class="flex-1"></div>
         <div
           class="px-3 py-1 cursor-pointer bg-primary hover:bg-purple-600 text-white rounded transition-colors"
@@ -1976,6 +1983,227 @@
           </div>
         </div>
       </div>
+
+      <!-- 视频时间轴同步模块 -->
+      <div v-if="activeTab === 'video-sync'">
+        <div class="text-center mb-5">
+          <h2 class="text-primary mb-3 text-2xl font-semibold">
+            <i class="fas fa-sync-alt mr-2"></i>视频时间轴同步
+          </h2>
+          <p class="text-gray-400 text-sm">
+            将中文视频与日文配音完美同步，通过智能切割、慢放和拼接视频片段
+          </p>
+        </div>
+
+        <!-- 文件上传区域 -->
+        <div class="bg-gray-800 rounded-lg p-6 mb-5">
+          <h3 class="text-lg font-semibold mb-4 text-primary">
+            <i class="fas fa-upload mr-2"></i>上传文件
+          </h3>
+
+          <!-- 原始SRT文件 -->
+          <div class="mb-4">
+            <label class="block text-sm font-medium mb-2">
+              <i class="fas fa-file-alt mr-1"></i>原始SRT文件（中文字幕）
+            </label>
+            <input
+              type="file"
+              accept=".srt"
+              @change="handleVideoSyncFileUpload($event, 'original_srt')"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            />
+            <p v-if="videoSync.files.original_srt" class="text-sm text-green-400 mt-1">
+              ✓ {{ videoSync.files.original_srt }}
+            </p>
+          </div>
+
+          <!-- 更新后的音频文件 -->
+          <div class="mb-4">
+            <label class="block text-sm font-medium mb-2">
+              <i class="fas fa-music mr-1"></i>更新后的音频文件（日文配音）
+            </label>
+            <input
+              type="file"
+              accept=".wav,.mp3"
+              @change="handleVideoSyncFileUpload($event, 'updated_audio')"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            />
+            <p v-if="videoSync.files.updated_audio" class="text-sm text-green-400 mt-1">
+              ✓ {{ videoSync.files.updated_audio }}
+            </p>
+          </div>
+
+          <!-- 更新后的SRT文件 -->
+          <div class="mb-4">
+            <label class="block text-sm font-medium mb-2">
+              <i class="fas fa-file-alt mr-1"></i>更新后的SRT文件（日文字幕）
+            </label>
+            <input
+              type="file"
+              accept=".srt"
+              @change="handleVideoSyncFileUpload($event, 'updated_srt')"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            />
+            <p v-if="videoSync.files.updated_srt" class="text-sm text-green-400 mt-1">
+              ✓ {{ videoSync.files.updated_srt }}
+            </p>
+          </div>
+
+          <!-- 原始视频文件（可选） -->
+          <div class="mb-4">
+            <label class="block text-sm font-medium mb-2">
+              <i class="fas fa-video mr-1"></i>原始视频文件（可选，不提供则仅分析差异）
+            </label>
+            <input
+              type="file"
+              accept=".mp4,.avi,.mkv"
+              @change="handleVideoSyncFileUpload($event, 'original_video')"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            />
+            <p v-if="videoSync.files.original_video" class="text-sm text-green-400 mt-1">
+              ✓ {{ videoSync.files.original_video }}
+            </p>
+          </div>
+        </div>
+
+        <!-- 配置参数 -->
+        <div class="bg-gray-800 rounded-lg p-6 mb-5">
+          <h3 class="text-lg font-semibold mb-4 text-primary">
+            <i class="fas fa-cog mr-2"></i>处理参数
+          </h3>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- 最大慢放倍率 -->
+            <div>
+              <label class="block text-sm font-medium mb-2">
+                最大慢放倍率
+              </label>
+              <input
+                type="number"
+                v-model.number="videoSync.config.max_slowdown_ratio"
+                min="1.0"
+                max="3.0"
+                step="0.1"
+                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+              />
+              <p class="text-xs text-gray-400 mt-1">建议不超过2.0x</p>
+            </div>
+
+            <!-- 质量预设 -->
+            <div>
+              <label class="block text-sm font-medium mb-2">
+                质量预设
+              </label>
+              <select
+                v-model="videoSync.config.quality_preset"
+                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+              >
+                <option value="fast">快速（适合预览）</option>
+                <option value="medium">中等（推荐）</option>
+                <option value="high">高质量（耗时较长）</option>
+              </select>
+            </div>
+
+            <!-- 帧插值 -->
+            <div class="col-span-2">
+              <label class="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  v-model="videoSync.config.enable_frame_interpolation"
+                  class="mr-2"
+                />
+                <span class="text-sm">启用帧插值（慢放倍率>=1.5x时提升流畅度）</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="flex gap-3 mb-5">
+          <button
+            @click="startVideoSync"
+            :disabled="!canStartVideoSync || videoSync.processing"
+            class="flex-1 px-6 py-3 bg-primary hover:bg-purple-600 text-white rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <i class="fas fa-play mr-2"></i>
+            {{ videoSync.files.original_video ? '开始视频同步' : '仅分析差异' }}
+          </button>
+          <button
+            @click="resetVideoSync"
+            class="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-semibold transition-colors"
+          >
+            <i class="fas fa-redo mr-2"></i>重置
+          </button>
+        </div>
+
+        <!-- 处理进度 -->
+        <div v-if="videoSync.processing" class="bg-gray-800 rounded-lg p-6 mb-5">
+          <h3 class="text-lg font-semibold mb-4 text-primary">
+            <i class="fas fa-spinner fa-spin mr-2"></i>处理中...
+          </h3>
+          <div class="mb-3">
+            <div class="flex justify-between text-sm mb-1">
+              <span>{{ videoSync.status.stage }}</span>
+              <span>{{ videoSync.status.progress }}%</span>
+            </div>
+            <div class="w-full bg-gray-700 rounded-full h-2">
+              <div
+                class="bg-primary h-2 rounded-full transition-all duration-300"
+                :style="{ width: videoSync.status.progress + '%' }"
+              ></div>
+            </div>
+          </div>
+          <p class="text-sm text-gray-400">{{ videoSync.status.message }}</p>
+        </div>
+
+        <!-- 处理结果 -->
+        <div v-if="videoSync.result" class="bg-gray-800 rounded-lg p-6">
+          <h3 class="text-lg font-semibold mb-4 text-primary">
+            <i class="fas fa-check-circle mr-2"></i>处理完成
+          </h3>
+          
+          <div v-if="videoSync.result.success" class="space-y-3">
+            <p class="text-green-400">
+              <i class="fas fa-check mr-2"></i>{{ videoSync.result.message }}
+            </p>
+            
+            <div v-if="videoSync.result.output_path" class="mt-4">
+              <a
+                :href="videoSync.result.download_url"
+                download
+                class="inline-block px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors"
+              >
+                <i class="fas fa-download mr-2"></i>下载同步后的视频
+              </a>
+            </div>
+
+            <div v-if="videoSync.result.timeline_diffs !== undefined" class="mt-4">
+              <p class="text-sm text-gray-400">
+                时间轴差异分析：共 {{ videoSync.result.timeline_diffs }} 个片段
+              </p>
+            </div>
+          </div>
+
+          <div v-else class="text-red-400">
+            <p><i class="fas fa-exclamation-triangle mr-2"></i>处理失败</p>
+            <pre class="mt-2 p-3 bg-gray-900 rounded text-xs overflow-auto">{{ videoSync.result.error }}</pre>
+          </div>
+        </div>
+
+        <!-- 使用说明 -->
+        <div class="mt-6 bg-blue-900 bg-opacity-30 border border-blue-700 rounded-lg p-4">
+          <h4 class="font-semibold mb-2 text-blue-300">
+            <i class="fas fa-info-circle mr-2"></i>使用说明
+          </h4>
+          <ul class="text-sm text-gray-300 space-y-1 list-disc list-inside">
+            <li>上传原始SRT（中文字幕）、日文配音音频和日文SRT</li>
+            <li>如果提供原始视频，将进行完整的视频同步处理</li>
+            <li>如果不提供视频，仅分析时间轴差异</li>
+            <li>慢放倍率建议不超过2.0x，超过会不自然</li>
+            <li>处理时间约为视频时长的2-5倍</li>
+          </ul>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -3266,6 +3494,172 @@
             }
           };
 
+          // ======================== 视频时间轴同步 ========================
+          const videoSync = ref({
+            files: {
+              original_srt: null,
+              updated_audio: null,
+              updated_srt: null,
+              original_video: null
+            },
+            config: {
+              max_slowdown_ratio: 2.0,
+              quality_preset: 'medium',
+              enable_frame_interpolation: true
+            },
+            processing: false,
+            taskId: null,
+            status: {
+              stage: '',
+              progress: 0,
+              message: ''
+            },
+            result: null
+          });
+
+          // 处理视频同步文件上传
+          const handleVideoSyncFileUpload = async (event, fileType) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            let endpoint = '';
+
+            // 根据文件类型选择上传端点
+            // 注意：所有上传API都使用 'file' 作为参数名
+            if (fileType === 'original_video') {
+              formData.append('file', file);
+              endpoint = '/api/upload-video';
+            } else if (fileType === 'updated_audio') {
+              formData.append('file', file);
+              endpoint = '/api/upload-audio';
+            } else {
+              formData.append('file', file);
+              endpoint = '/api/upload-srt';
+            }
+
+            try {
+              const res = await axios.post(endpoint, formData);
+              if (res.data.success) {
+                videoSync.value.files[fileType] = res.data.filename;
+              }
+            } catch (err) {
+              console.error('文件上传失败:', err);
+              alert(`文件上传失败：${err.response?.data?.detail || err.message}`);
+            }
+          };
+
+          // 检查是否可以开始视频同步
+          const canStartVideoSync = computed(() => {
+            return videoSync.value.files.original_srt &&
+                   videoSync.value.files.updated_audio &&
+                   videoSync.value.files.updated_srt;
+          });
+
+          // 开始视频同步
+          const startVideoSync = async () => {
+            if (!canStartVideoSync.value) {
+              alert('请先上传必需的文件');
+              return;
+            }
+
+            try {
+              videoSync.value.processing = true;
+              videoSync.value.result = null;
+
+              const requestData = {
+                original_srt_filename: videoSync.value.files.original_srt,
+                updated_audio_filename: videoSync.value.files.updated_audio,
+                updated_srt_filename: videoSync.value.files.updated_srt,
+                original_video_filename: videoSync.value.files.original_video,
+                max_slowdown_ratio: videoSync.value.config.max_slowdown_ratio,
+                quality_preset: videoSync.value.config.quality_preset,
+                enable_frame_interpolation: videoSync.value.config.enable_frame_interpolation
+              };
+
+              const res = await axios.post('/api/video-sync/start', requestData);
+              videoSync.value.taskId = res.data.task_id;
+
+              // 开始轮询任务状态
+              startVideoSyncPolling(res.data.task_id);
+            } catch (err) {
+              console.error('启动视频同步失败:', err);
+              alert(`启动视频同步失败：${err.response?.data?.detail || err.message}`);
+              videoSync.value.processing = false;
+            }
+          };
+
+          // 轮询视频同步任务状态
+          let videoSyncPollTimer = null;
+          const startVideoSyncPolling = (taskId) => {
+            if (videoSyncPollTimer) clearInterval(videoSyncPollTimer);
+
+            videoSyncPollTimer = setInterval(async () => {
+              try {
+                const res = await axios.get(`/api/video-sync/status/${taskId}`);
+                const task = res.data;
+
+                videoSync.value.status = {
+                  stage: task.stage || '',
+                  progress: task.progress || 0,
+                  message: task.message || ''
+                };
+
+                if (task.status === 'completed') {
+                  clearInterval(videoSyncPollTimer);
+                  videoSyncPollTimer = null;
+                  videoSync.value.processing = false;
+                  videoSync.value.result = {
+                    success: true,
+                    message: task.message,
+                    output_path: task.output_path,
+                    download_url: task.download_url,
+                    timeline_diffs: task.timeline_diffs,
+                    segments_processed: task.segments_processed
+                  };
+                }
+
+                if (task.status === 'failed') {
+                  clearInterval(videoSyncPollTimer);
+                  videoSyncPollTimer = null;
+                  videoSync.value.processing = false;
+                  videoSync.value.result = {
+                    success: false,
+                    error: task.error
+                  };
+                }
+              } catch (err) {
+                clearInterval(videoSyncPollTimer);
+                videoSyncPollTimer = null;
+                videoSync.value.processing = false;
+                console.error('获取视频同步进度失败:', err);
+              }
+            }, 2000);
+          };
+
+          // 重置视频同步
+          const resetVideoSync = () => {
+            videoSync.value.files = {
+              original_srt: null,
+              updated_audio: null,
+              updated_srt: null,
+              original_video: null
+            };
+            videoSync.value.processing = false;
+            videoSync.value.taskId = null;
+            videoSync.value.status = {
+              stage: '',
+              progress: 0,
+              message: ''
+            };
+            videoSync.value.result = null;
+
+            if (videoSyncPollTimer) {
+              clearInterval(videoSyncPollTimer);
+              videoSyncPollTimer = null;
+            }
+          };
+
           return {
             currentTask,
             formatStatus,
@@ -3340,6 +3734,12 @@
             formatVideoMergeStatus,
             startVideoMerge,
             openVideoMergeFolder,
+            // 视频时间轴同步
+            videoSync,
+            handleVideoSyncFileUpload,
+            canStartVideoSync,
+            startVideoSync,
+            resetVideoSync,
           };
         },
       }).mount("#app");
