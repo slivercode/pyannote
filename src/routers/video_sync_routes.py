@@ -18,10 +18,20 @@ router = APIRouter(prefix="/api/video-sync", tags=["视频同步"])
 
 class VideoSyncRequest(BaseModel):
     """视频时间轴同步请求"""
-    original_srt_filename: str  # 原始SRT文件名（中文）
-    updated_audio_filename: str  # 更新后的音频文件名（日文配音）
-    updated_srt_filename: str  # 更新后的SRT文件名（日文字幕）
+    # 支持两种模式：
+    # 1. 文件名模式（旧）：提供文件名，从input_dir读取
+    # 2. 绝对路径模式（新）：提供完整路径，直接使用
+    original_srt_filename: Optional[str] = None  # 原始SRT文件名（中文）
+    updated_audio_filename: Optional[str] = None  # 更新后的音频文件名（日文配音）
+    updated_srt_filename: Optional[str] = None  # 更新后的SRT文件名（日文字幕）
     original_video_filename: Optional[str] = None  # 原始视频文件名（可选）
+    
+    # 绝对路径模式（优先使用）
+    original_srt_path: Optional[str] = None  # 原始SRT文件的绝对路径
+    updated_audio_path: Optional[str] = None  # 更新后的音频文件的绝对路径
+    updated_srt_path: Optional[str] = None  # 更新后的SRT文件的绝对路径
+    original_video_path: Optional[str] = None  # 原始视频文件的绝对路径（可选）
+    
     max_slowdown_ratio: float = 2.0  # 最大慢放倍率
     quality_preset: str = "medium"  # 质量预设
     enable_frame_interpolation: bool = True  # 是否启用帧插值
@@ -44,6 +54,10 @@ async def start_video_sync(request: VideoSyncRequest):
     """
     启动视频时间轴同步任务
     
+    支持两种模式：
+    1. 文件名模式：提供 *_filename 参数，从 input_dir 读取文件
+    2. 绝对路径模式：提供 *_path 参数，直接使用文件的绝对路径
+    
     处理流程：
     1. 解析原始SRT和更新SRT
     2. 分析时间轴差异
@@ -52,31 +66,82 @@ async def start_video_sync(request: VideoSyncRequest):
     5. 拼接视频
     6. 替换音轨和嵌入字幕
     """
+    from pathlib import Path
+    
     input_dir = get_input_dir()
     output_dir = get_output_dir()
     scripts_dir = get_scripts_dir()
     
     task_id = generate_task_id()
     
-    # 构建文件路径（所有上传的文件都在input_dir中）
-    original_srt_path = input_dir / request.original_srt_filename
-    updated_audio_path = input_dir / request.updated_audio_filename
-    updated_srt_path = input_dir / request.updated_srt_filename
+    # 解析文件路径（优先使用绝对路径，否则使用文件名）
+    def resolve_path(abs_path: Optional[str], filename: Optional[str], file_desc: str) -> Optional[Path]:
+        """
+        解析文件路径，优先使用绝对路径
+        
+        清理路径中的不可见Unicode控制字符
+        """
+        if abs_path:
+            # 清理路径中的不可见Unicode控制字符
+            # 移除常见的控制字符：LTR/RTL标记、零宽字符等
+            cleaned_path = abs_path.strip()
+            # 移除Unicode控制字符（U+200E, U+200F, U+202A-U+202E等）
+            import unicodedata
+            cleaned_path = ''.join(
+                char for char in cleaned_path 
+                if unicodedata.category(char) not in ('Cc', 'Cf', 'Cn', 'Co', 'Cs')
+                or char in ('\n', '\r', '\t')  # 保留常见的空白字符
+            )
+            cleaned_path = cleaned_path.strip()
+            
+            # 使用绝对路径
+            path = Path(cleaned_path)
+            if not path.exists():
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"{file_desc}不存在: {cleaned_path}\n原始路径: {repr(abs_path)}"
+                )
+            return path
+        elif filename:
+            # 使用文件名（从input_dir读取）
+            path = input_dir / filename
+            if not path.exists():
+                raise HTTPException(status_code=404, detail=f"{file_desc}不存在: {filename}")
+            return path
+        return None
     
-    # 验证文件存在
-    if not original_srt_path.exists():
-        raise HTTPException(status_code=404, detail=f"原始SRT文件不存在: {request.original_srt_filename}")
-    if not updated_audio_path.exists():
-        raise HTTPException(status_code=404, detail=f"更新后的音频文件不存在: {request.updated_audio_filename}")
-    if not updated_srt_path.exists():
-        raise HTTPException(status_code=404, detail=f"更新后的SRT文件不存在: {request.updated_srt_filename}")
+    # 解析必需文件
+    original_srt_path = resolve_path(
+        request.original_srt_path, 
+        request.original_srt_filename, 
+        "原始SRT文件"
+    )
+    updated_audio_path = resolve_path(
+        request.updated_audio_path, 
+        request.updated_audio_filename, 
+        "更新后的音频文件"
+    )
+    updated_srt_path = resolve_path(
+        request.updated_srt_path, 
+        request.updated_srt_filename, 
+        "更新后的SRT文件"
+    )
     
-    # 如果提供了视频文件，验证其存在
-    original_video_path = None
-    if request.original_video_filename:
-        original_video_path = input_dir / request.original_video_filename
-        if not original_video_path.exists():
-            raise HTTPException(status_code=404, detail=f"原始视频文件不存在: {request.original_video_filename}")
+    # 验证必需文件
+    if not original_srt_path:
+        raise HTTPException(status_code=400, detail="必须提供原始SRT文件（original_srt_path 或 original_srt_filename）")
+    if not updated_audio_path:
+        raise HTTPException(status_code=400, detail="必须提供更新后的音频文件（updated_audio_path 或 updated_audio_filename）")
+    if not updated_srt_path:
+        raise HTTPException(status_code=400, detail="必须提供更新后的SRT文件（updated_srt_path 或 updated_srt_filename）")
+    
+    # 解析可选的视频文件
+    original_video_path = resolve_path(
+        request.original_video_path, 
+        request.original_video_filename, 
+        "原始视频文件"
+    )
+    
     
     # 创建任务输出目录
     task_output_dir = output_dir / f"video_sync_{task_id}"

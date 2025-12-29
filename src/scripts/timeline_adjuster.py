@@ -86,13 +86,13 @@ class TimelineAdjuster:
         print(f"与原始SRT差异: {time_diff:+d}ms ({time_diff/1000:+.1f}秒)")
         
         if not self.preserve_total_time:
-            # 不需要保持总时长，直接按配音时长排列，移除间隙
-            print("⚠️ 未启用保持总时长，直接按配音时长排列（移除间隙）")
+            # 不需要保持总时长，直接按配音时长排列，保留原始间隙
+            print("⚠️ 未启用保持总时长，直接按配音时长排列（保留原始间隙）")
             return self._simple_timeline_adjustment_no_gaps(effective_durations)
         
         if abs(time_diff) < 100:
-            # 差异很小（< 100ms = 0.1秒），直接按配音时长排列
-            print(f"✅ 差异很小({time_diff:+d}ms < 100ms)，直接按配音时长排列")
+            # 差异很小（< 100ms = 0.1秒），直接按配音时长排列，保留原始间隙
+            print(f"✅ 差异很小({time_diff:+d}ms < 100ms)，直接按配音时长排列（保留原始间隙）")
             return self._simple_timeline_adjustment_no_gaps(effective_durations)
         
         # 第三步：需要调整时间轴以保持总时长
@@ -120,25 +120,36 @@ class TimelineAdjuster:
     
     def _simple_timeline_adjustment_no_gaps(self, durations: List[int]) -> List[Dict]:
         """
-        简单时间轴调整：直接按配音时长排列，移除所有间隙
+        简单时间轴调整：使用原始开始时间，仅调整配音时长
+        保持台词间隔完全不变
         """
-        current_time = 0
         updated_subtitles = []
         
-        print(f"\n  🔗 按配音时长紧密排列（移除间隙）:")
+        print(f"\n  🔗 使用原始时间轴，仅调整配音时长（保持间隔不变）:")
         
         for i, (subtitle, duration) in enumerate(zip(self.subtitles, durations)):
             updated_subtitle = subtitle.copy()
-            updated_subtitle['start_ms'] = current_time
-            updated_subtitle['end_ms'] = current_time + duration
+            # 使用原始的开始时间（保持间隔不变）
+            updated_subtitle['start_ms'] = subtitle['start_ms']
+            # 根据配音时长设置结束时间
+            updated_subtitle['end_ms'] = subtitle['start_ms'] + duration
             
             original_duration = subtitle['end_ms'] - subtitle['start_ms']
-            print(f"    字幕 {i+1}: {current_time}ms - {current_time + duration}ms (时长: {duration}ms)")
+            
+            # 计算间隙（如果不是第一条）
+            if i > 0:
+                gap = subtitle['start_ms'] - self.subtitles[i-1]['end_ms']
+                actual_gap = updated_subtitle['start_ms'] - updated_subtitles[i-1]['end_ms']
+                print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
+                      f"(配音: {duration}ms, 原间隔: {gap}ms, 实际间隔: {actual_gap}ms)")
+            else:
+                print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
+                      f"(配音: {duration}ms)")
             
             updated_subtitles.append(updated_subtitle)
-            current_time += duration
         
-        final_time = current_time
+        # 计算最终总时长（以最后一条字幕的结束时间为准）
+        final_time = updated_subtitles[-1]['end_ms'] if updated_subtitles else 0
         print(f"\n  📊 最终总时长: {final_time}ms ({final_time/1000:.1f}秒)")
         print(f"  📊 原始总时长: {self.original_total_time}ms ({self.original_total_time/1000:.1f}秒)")
         print(f"  📊 时长差异: {final_time - self.original_total_time:+d}ms ({(final_time - self.original_total_time)/1000:+.1f}秒)")
@@ -479,57 +490,47 @@ class TimelineAdjuster:
     
     def _rebuild_timeline(self, adjusted_durations: List[int], gaps: List[int], original_durations: List[int]) -> List[Dict]:
         """
-        重建时间轴
+        重建时间轴 - 使用原始开始时间，保持间隔不变
         """
-        current_time = 0
         updated_subtitles = []
         
-        print(f"\n  🔨 重建时间轴:")
+        print(f"\n  🔨 重建时间轴（保持原始间隔）:")
         
-        # 微调间隙以确保总时长精确匹配（仅在保持总时长模式下）
-        adjusted_gaps = gaps.copy()
-        if self.preserve_total_time:
-            total_duration = sum(adjusted_durations)
-            total_gaps = sum(gaps)
-            current_total = total_duration + total_gaps
-            adjustment_needed = self.original_total_time - current_total
-            
-            # 如果需要微调，调整间隙
-            if abs(adjustment_needed) > 10 and len(adjusted_gaps) > 0:
-                # 将调整量均匀分配到所有间隙
-                num_gaps = len([g for g in adjusted_gaps if g > 0])
-                if num_gaps == 0:
-                    num_gaps = len(adjusted_gaps)
-                
-                adjustment_per_gap = adjustment_needed / num_gaps
-                for i in range(len(adjusted_gaps)):
-                    if adjusted_gaps[i] > 0 or adjustment_needed > 0:
-                        adjusted_gaps[i] = max(0, int(adjusted_gaps[i] + adjustment_per_gap))
-        
-        for i, (subtitle, duration, gap, original_duration) in enumerate(zip(self.subtitles, adjusted_durations, adjusted_gaps, original_durations)):
-            current_time += gap
-            
+        for i, (subtitle, duration, original_duration) in enumerate(zip(self.subtitles, adjusted_durations, original_durations)):
             updated_subtitle = subtitle.copy()
-            updated_subtitle['start_ms'] = current_time
-            updated_subtitle['end_ms'] = current_time + duration
+            # 使用原始的开始时间（保持间隔不变）
+            updated_subtitle['start_ms'] = subtitle['start_ms']
+            # 根据调整后的配音时长设置结束时间
+            updated_subtitle['end_ms'] = subtitle['start_ms'] + duration
             
             # 保存调整信息
             if abs(original_duration - duration) > 10:
                 updated_subtitle['original_duration_ms'] = original_duration
                 updated_subtitle['adjusted_duration_ms'] = duration
-                speed_ratio = original_duration / duration
-                print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
-                      f"(语速: {speed_ratio:.2f}x, 间隙: {gap}ms)")
+                speed_ratio = original_duration / duration if duration > 0 else 1.0
+                
+                # 计算实际间隙
+                if i > 0:
+                    actual_gap = updated_subtitle['start_ms'] - updated_subtitles[i-1]['end_ms']
+                    original_gap = subtitle['start_ms'] - self.subtitles[i-1]['end_ms']
+                    print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
+                          f"(语速: {speed_ratio:.2f}x, 原间隔: {original_gap}ms, 实际间隔: {actual_gap}ms)")
+                else:
+                    print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
+                          f"(语速: {speed_ratio:.2f}x)")
             else:
-                print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
-                      f"(间隙: {gap}ms)")
+                if i > 0:
+                    actual_gap = updated_subtitle['start_ms'] - updated_subtitles[i-1]['end_ms']
+                    original_gap = subtitle['start_ms'] - self.subtitles[i-1]['end_ms']
+                    print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
+                          f"(原间隔: {original_gap}ms, 实际间隔: {actual_gap}ms)")
+                else:
+                    print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms")
             
             updated_subtitles.append(updated_subtitle)
-            current_time += duration
         
-        final_time = current_time
+        final_time = updated_subtitles[-1]['end_ms'] if updated_subtitles else 0
         extension = getattr(self, '_final_extension', 0)
-        expected_final_time = self.original_total_time + extension
         
         print(f"\n  📊 时间轴重建完成:")
         print(f"    原始总时长: {self.original_total_time}ms ({self.original_total_time/1000:.1f}秒)")
@@ -542,6 +543,16 @@ class TimelineAdjuster:
             print(f"    ⚠️ 总时长适当延长 {extension}ms（语速限制所致）")
         else:
             print(f"    ⚠️ 总时长有差异")
+        
+        # 验证间隔是否保持
+        print(f"\n  🔍 间隔验证:")
+        for i in range(1, len(updated_subtitles)):
+            original_gap = self.subtitles[i]['start_ms'] - self.subtitles[i-1]['end_ms']
+            actual_gap = updated_subtitles[i]['start_ms'] - updated_subtitles[i-1]['end_ms']
+            if abs(original_gap - actual_gap) > 10:
+                print(f"    ⚠️ 字幕 {i} -> {i+1}: 原间隔 {original_gap}ms, 实际间隔 {actual_gap}ms (差异: {actual_gap - original_gap:+d}ms)")
+            else:
+                print(f"    ✅ 字幕 {i} -> {i+1}: 间隔保持 {original_gap}ms")
         
         return updated_subtitles
     

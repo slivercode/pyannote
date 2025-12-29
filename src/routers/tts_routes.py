@@ -98,7 +98,7 @@ async def start_tts_dubbing(
     max_audio_speed_rate: float = Form(2.0),
     max_video_pts_rate: float = Form(10.0),
     remove_silent_gaps: bool = Form(False),
-    preserve_total_time: bool = Form(True)
+    preserve_total_time: bool = Form(False)
 ):
     """
     启动TTS配音任务

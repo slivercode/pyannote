@@ -803,9 +803,11 @@ class VideoTimelineSyncProcessor:
         concat_file = self.temp_dir / "concat_list.txt"
         with open(concat_file, 'w', encoding='utf-8') as f:
             for segment in segments:
-                # 使用绝对路径
+                # 使用绝对路径，并转换为Unix风格路径（FFmpeg在Windows上也支持）
                 abs_path = segment.resolve()
-                f.write(f"file '{abs_path}'\n")
+                # 将Windows路径转换为Unix风格（用正斜杠）
+                unix_path = str(abs_path).replace('\\', '/')
+                f.write(f"file '{unix_path}'\n")
         
         print(f"拼接 {len(segments)} 个片段...")
         

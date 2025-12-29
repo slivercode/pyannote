@@ -1995,10 +1995,25 @@
           </p>
         </div>
 
-        <!-- 文件上传区域 -->
+        <!-- 输入模式选择 -->
+        <div class="bg-gray-800 rounded-lg p-4 mb-5">
+          <label class="flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              v-model="videoSync.useAbsolutePath"
+              class="mr-2"
+            />
+            <span class="text-sm">
+              <i class="fas fa-folder-open mr-1"></i>使用文件绝对路径（无需上传，直接使用本地文件）
+            </span>
+          </label>
+        </div>
+
+        <!-- 文件上传/路径输入区域 -->
         <div class="bg-gray-800 rounded-lg p-6 mb-5">
           <h3 class="text-lg font-semibold mb-4 text-primary">
-            <i class="fas fa-upload mr-2"></i>上传文件
+            <i :class="videoSync.useAbsolutePath ? 'fas fa-folder-open' : 'fas fa-upload'" class="mr-2"></i>
+            {{ videoSync.useAbsolutePath ? '输入文件路径' : '上传文件' }}
           </h3>
 
           <!-- 原始SRT文件 -->
@@ -2007,13 +2022,24 @@
               <i class="fas fa-file-alt mr-1"></i>原始SRT文件（中文字幕）
             </label>
             <input
+              v-if="videoSync.useAbsolutePath"
+              type="text"
+              v-model="videoSync.paths.original_srt"
+              placeholder="例如: D:\videos\original.srt"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            />
+            <input
+              v-else
               type="file"
               accept=".srt"
               @change="handleVideoSyncFileUpload($event, 'original_srt')"
               class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
             />
-            <p v-if="videoSync.files.original_srt" class="text-sm text-green-400 mt-1">
+            <p v-if="videoSync.files.original_srt && !videoSync.useAbsolutePath" class="text-sm text-green-400 mt-1">
               ✓ {{ videoSync.files.original_srt }}
+            </p>
+            <p v-if="videoSync.paths.original_srt && videoSync.useAbsolutePath" class="text-sm text-green-400 mt-1">
+              ✓ {{ videoSync.paths.original_srt }}
             </p>
           </div>
 
@@ -2023,13 +2049,24 @@
               <i class="fas fa-music mr-1"></i>更新后的音频文件（日文配音）
             </label>
             <input
+              v-if="videoSync.useAbsolutePath"
+              type="text"
+              v-model="videoSync.paths.updated_audio"
+              placeholder="例如: D:\videos\dubbing_result.wav"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            />
+            <input
+              v-else
               type="file"
               accept=".wav,.mp3"
               @change="handleVideoSyncFileUpload($event, 'updated_audio')"
               class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
             />
-            <p v-if="videoSync.files.updated_audio" class="text-sm text-green-400 mt-1">
+            <p v-if="videoSync.files.updated_audio && !videoSync.useAbsolutePath" class="text-sm text-green-400 mt-1">
               ✓ {{ videoSync.files.updated_audio }}
+            </p>
+            <p v-if="videoSync.paths.updated_audio && videoSync.useAbsolutePath" class="text-sm text-green-400 mt-1">
+              ✓ {{ videoSync.paths.updated_audio }}
             </p>
           </div>
 
@@ -2039,13 +2076,24 @@
               <i class="fas fa-file-alt mr-1"></i>更新后的SRT文件（日文字幕）
             </label>
             <input
+              v-if="videoSync.useAbsolutePath"
+              type="text"
+              v-model="videoSync.paths.updated_srt"
+              placeholder="例如: D:\videos\traditional_subtitles.srt"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            />
+            <input
+              v-else
               type="file"
               accept=".srt"
               @change="handleVideoSyncFileUpload($event, 'updated_srt')"
               class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
             />
-            <p v-if="videoSync.files.updated_srt" class="text-sm text-green-400 mt-1">
+            <p v-if="videoSync.files.updated_srt && !videoSync.useAbsolutePath" class="text-sm text-green-400 mt-1">
               ✓ {{ videoSync.files.updated_srt }}
+            </p>
+            <p v-if="videoSync.paths.updated_srt && videoSync.useAbsolutePath" class="text-sm text-green-400 mt-1">
+              ✓ {{ videoSync.paths.updated_srt }}
             </p>
           </div>
 
@@ -2055,13 +2103,24 @@
               <i class="fas fa-video mr-1"></i>原始视频文件（可选，不提供则仅分析差异）
             </label>
             <input
+              v-if="videoSync.useAbsolutePath"
+              type="text"
+              v-model="videoSync.paths.original_video"
+              placeholder="例如: D:\videos\original.mp4"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            />
+            <input
+              v-else
               type="file"
               accept=".mp4,.avi,.mkv"
               @change="handleVideoSyncFileUpload($event, 'original_video')"
               class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
             />
-            <p v-if="videoSync.files.original_video" class="text-sm text-green-400 mt-1">
+            <p v-if="videoSync.files.original_video && !videoSync.useAbsolutePath" class="text-sm text-green-400 mt-1">
               ✓ {{ videoSync.files.original_video }}
+            </p>
+            <p v-if="videoSync.paths.original_video && videoSync.useAbsolutePath" class="text-sm text-green-400 mt-1">
+              ✓ {{ videoSync.paths.original_video }}
             </p>
           </div>
         </div>
@@ -3496,11 +3555,18 @@
 
           // ======================== 视频时间轴同步 ========================
           const videoSync = ref({
+            useAbsolutePath: false,  // 是否使用绝对路径模式
             files: {
               original_srt: null,
               updated_audio: null,
               updated_srt: null,
               original_video: null
+            },
+            paths: {
+              original_srt: '',
+              updated_audio: '',
+              updated_srt: '',
+              original_video: ''
             },
             config: {
               max_slowdown_ratio: 2.0,
@@ -3551,15 +3617,23 @@
 
           // 检查是否可以开始视频同步
           const canStartVideoSync = computed(() => {
-            return videoSync.value.files.original_srt &&
-                   videoSync.value.files.updated_audio &&
-                   videoSync.value.files.updated_srt;
+            if (videoSync.value.useAbsolutePath) {
+              // 绝对路径模式：检查路径是否填写
+              return videoSync.value.paths.original_srt &&
+                     videoSync.value.paths.updated_audio &&
+                     videoSync.value.paths.updated_srt;
+            } else {
+              // 文件上传模式：检查文件是否上传
+              return videoSync.value.files.original_srt &&
+                     videoSync.value.files.updated_audio &&
+                     videoSync.value.files.updated_srt;
+            }
           });
 
           // 开始视频同步
           const startVideoSync = async () => {
             if (!canStartVideoSync.value) {
-              alert('请先上传必需的文件');
+              alert(videoSync.value.useAbsolutePath ? '请填写所有必需的文件路径' : '请先上传必需的文件');
               return;
             }
 
@@ -3567,15 +3641,31 @@
               videoSync.value.processing = true;
               videoSync.value.result = null;
 
-              const requestData = {
-                original_srt_filename: videoSync.value.files.original_srt,
-                updated_audio_filename: videoSync.value.files.updated_audio,
-                updated_srt_filename: videoSync.value.files.updated_srt,
-                original_video_filename: videoSync.value.files.original_video,
-                max_slowdown_ratio: videoSync.value.config.max_slowdown_ratio,
-                quality_preset: videoSync.value.config.quality_preset,
-                enable_frame_interpolation: videoSync.value.config.enable_frame_interpolation
-              };
+              let requestData;
+              
+              if (videoSync.value.useAbsolutePath) {
+                // 绝对路径模式
+                requestData = {
+                  original_srt_path: videoSync.value.paths.original_srt,
+                  updated_audio_path: videoSync.value.paths.updated_audio,
+                  updated_srt_path: videoSync.value.paths.updated_srt,
+                  original_video_path: videoSync.value.paths.original_video || null,
+                  max_slowdown_ratio: videoSync.value.config.max_slowdown_ratio,
+                  quality_preset: videoSync.value.config.quality_preset,
+                  enable_frame_interpolation: videoSync.value.config.enable_frame_interpolation
+                };
+              } else {
+                // 文件名模式
+                requestData = {
+                  original_srt_filename: videoSync.value.files.original_srt,
+                  updated_audio_filename: videoSync.value.files.updated_audio,
+                  updated_srt_filename: videoSync.value.files.updated_srt,
+                  original_video_filename: videoSync.value.files.original_video,
+                  max_slowdown_ratio: videoSync.value.config.max_slowdown_ratio,
+                  quality_preset: videoSync.value.config.quality_preset,
+                  enable_frame_interpolation: videoSync.value.config.enable_frame_interpolation
+                };
+              }
 
               const res = await axios.post('/api/video-sync/start', requestData);
               videoSync.value.taskId = res.data.task_id;
@@ -3644,6 +3734,12 @@
               updated_audio: null,
               updated_srt: null,
               original_video: null
+            };
+            videoSync.value.paths = {
+              original_srt: '',
+              updated_audio: '',
+              updated_srt: '',
+              original_video: ''
             };
             videoSync.value.processing = false;
             videoSync.value.taskId = null;

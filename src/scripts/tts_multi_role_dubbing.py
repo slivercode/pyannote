@@ -28,7 +28,7 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                  enable_smart_speedup=False, enable_audio_speedup=True,
                  enable_video_slowdown=False, max_audio_speed_rate=2.0,
                  max_video_pts_rate=10.0, remove_silent_gaps=False,
-                 preserve_total_time=True):
+                 preserve_total_time=False):  # 默认不保持总时长，保持原始间隔
         """
         初始化多角色配音处理器
         
