@@ -42,11 +42,23 @@ try:
     current_dir = pathlib.Path(__file__).parent
     print(f"使用项目内缓存目录：{current_dir}")
 
-    # 初始化目录
+    # 初始化目录（跨平台兼容）
     input_dir = current_dir / "input"
     output_dir = current_dir / "output"
+    
+    # 创建目录
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 在Linux/Mac上设置目录权限
+    if os.name != 'nt':
+        try:
+            os.chmod(input_dir, 0o755)
+            os.chmod(output_dir, 0o755)
+            print(f"✅ 已设置目录权限（Linux/Mac）")
+        except Exception as e:
+            print(f"⚠️ 设置目录权限失败（可能无需修改）: {e}")
+    
     print(f"音频上传目录（Input）：{input_dir}")
     print(f"音频生成目录（Output）：{output_dir}")
 

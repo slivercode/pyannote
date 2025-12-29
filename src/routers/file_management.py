@@ -3,11 +3,13 @@
 处理文件上传、下载和文件夹操作
 """
 import os
+import sys
 import pathlib
 import platform
 import subprocess
 from datetime import datetime
 from typing import List
+import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -15,7 +17,15 @@ from pydantic import BaseModel
 from models.responses import AudioUploadResponse
 from config.dependencies import get_current_dir, get_input_dir, get_output_dir
 
+# 添加utils目录到路径
+utils_dir = pathlib.Path(__file__).parent.parent / "utils"
+if str(utils_dir) not in sys.path:
+    sys.path.insert(0, str(utils_dir))
+
+from path_utils import ensure_directory_exists, safe_file_write, is_path_writable
+
 router = APIRouter(prefix="/api", tags=["文件管理"])
+logger = logging.getLogger(__name__)
 
 
 class OpenFolderRequest(BaseModel):
@@ -35,6 +45,7 @@ async def upload_audio(
     1. 仅支持 mp3/wav/flac/m4a 格式
     2. 文件名自动添加时间戳（避免重名）
     3. 上传后自动保存到项目根目录的 input 文件夹
+    4. 跨平台兼容（Windows/Linux/Mac）
     """
     # 1. 验证文件类型（双重验证：MIME类型 + 文件后缀，防止恶意文件）
     allowed_content_types = [
@@ -68,8 +79,24 @@ async def upload_audio(
         f"{timestamp}_{safe_filename}"  # 最终保存的文件名：20240520123456_test.mp3
     )
 
-    # 3. 保存文件到 input 目录
-    save_path = pathlib.Path(get_input_dir()) / saved_filename
+    # 3. 获取input目录并确保其存在且可写（跨平台）
+    input_dir = pathlib.Path(get_input_dir())
+    
+    # 确保目录存在且可写
+    if not ensure_directory_exists(input_dir):
+        raise HTTPException(
+            status_code=500, 
+            detail=f"无法创建或访问input目录: {input_dir}，请检查权限"
+        )
+    
+    if not is_path_writable(input_dir):
+        raise HTTPException(
+            status_code=500,
+            detail=f"input目录不可写: {input_dir}，请检查权限"
+        )
+    
+    # 4. 保存文件到 input 目录
+    save_path = input_dir / saved_filename
     save_path_str = str(save_path)  # 本地完整路径（给前端/脚本参考）
 
     try:
@@ -80,13 +107,24 @@ async def upload_audio(
                 f.write(chunk)
                 file_size += len(chunk)
         await file.close()  # 关闭文件流
+        
+        # 在Linux/Mac上设置文件权限
+        if os.name != 'nt':
+            try:
+                os.chmod(save_path, 0o644)
+            except Exception as e:
+                logger.warning(f"设置文件权限失败: {e}")
+        
+        logger.info(f"文件上传成功: {save_path} ({file_size} bytes)")
+        
     except Exception as e:
+        logger.error(f"文件保存失败: {save_path}, 错误: {e}")
         raise HTTPException(status_code=500, detail=f"文件保存失败：{str(e)}")
 
-    # 4. 构建HTTP访问URL（前端可直接拼接服务地址使用）
+    # 5. 构建HTTP访问URL（前端可直接拼接服务地址使用）
     access_url = f"/input/{saved_filename}"
 
-    # 5. 返回上传结果
+    # 6. 返回上传结果
     return AudioUploadResponse(
         success=True,
         filename=saved_filename,
@@ -111,6 +149,7 @@ async def upload_video(
     2. 支持音频格式：wav/mp3/flac/aac/m4a/ogg
     3. 文件名自动添加时间戳（避免重名）
     4. 上传后自动保存到项目根目录的 input 文件夹
+    5. 跨平台兼容（Windows/Linux/Mac）
     """
     # 1. 验证文件类型
     allowed_content_types = [
@@ -152,8 +191,23 @@ async def upload_video(
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     saved_filename = f"{timestamp}_{safe_filename}"
 
-    # 3. 保存文件
-    save_path = pathlib.Path(get_input_dir()) / saved_filename
+    # 3. 获取input目录并确保其存在且可写（跨平台）
+    input_dir = pathlib.Path(get_input_dir())
+    
+    if not ensure_directory_exists(input_dir):
+        raise HTTPException(
+            status_code=500, 
+            detail=f"无法创建或访问input目录: {input_dir}，请检查权限"
+        )
+    
+    if not is_path_writable(input_dir):
+        raise HTTPException(
+            status_code=500,
+            detail=f"input目录不可写: {input_dir}，请检查权限"
+        )
+
+    # 4. 保存文件
+    save_path = input_dir / saved_filename
     save_path_str = str(save_path)
 
     try:
@@ -163,7 +217,18 @@ async def upload_video(
                 f.write(chunk)
                 file_size += len(chunk)
         await file.close()
+        
+        # 在Linux/Mac上设置文件权限
+        if os.name != 'nt':
+            try:
+                os.chmod(save_path, 0o644)
+            except Exception as e:
+                logger.warning(f"设置文件权限失败: {e}")
+        
+        logger.info(f"文件上传成功: {save_path} ({file_size} bytes)")
+        
     except Exception as e:
+        logger.error(f"文件保存失败: {save_path}, 错误: {e}")
         raise HTTPException(status_code=500, detail=f"文件保存失败：{str(e)}")
 
     access_url = f"/input/{saved_filename}"
@@ -202,6 +267,7 @@ async def upload_srt(
     1. 仅支持 .srt 格式
     2. 文件名自动添加时间戳（避免重名）
     3. 上传后自动保存到项目根目录的 input 文件夹
+    4. 跨平台兼容（Windows/Linux/Mac）
     """
     # 1. 验证文件类型
     file_ext = pathlib.Path(file.filename).suffix.lower()
@@ -216,8 +282,23 @@ async def upload_srt(
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     saved_filename = f"{timestamp}_{safe_filename}"
 
-    # 3. 保存文件
-    save_path = pathlib.Path(get_input_dir()) / saved_filename
+    # 3. 获取input目录并确保其存在且可写（跨平台）
+    input_dir = pathlib.Path(get_input_dir())
+    
+    if not ensure_directory_exists(input_dir):
+        raise HTTPException(
+            status_code=500, 
+            detail=f"无法创建或访问input目录: {input_dir}，请检查权限"
+        )
+    
+    if not is_path_writable(input_dir):
+        raise HTTPException(
+            status_code=500,
+            detail=f"input目录不可写: {input_dir}，请检查权限"
+        )
+
+    # 4. 保存文件
+    save_path = input_dir / saved_filename
     save_path_str = str(save_path)
 
     try:
@@ -227,7 +308,18 @@ async def upload_srt(
                 f.write(chunk)
                 file_size += len(chunk)
         await file.close()
+        
+        # 在Linux/Mac上设置文件权限
+        if os.name != 'nt':
+            try:
+                os.chmod(save_path, 0o644)
+            except Exception as e:
+                logger.warning(f"设置文件权限失败: {e}")
+        
+        logger.info(f"文件上传成功: {save_path} ({file_size} bytes)")
+        
     except Exception as e:
+        logger.error(f"文件保存失败: {save_path}, 错误: {e}")
         raise HTTPException(status_code=500, detail=f"文件保存失败：{str(e)}")
 
     access_url = f"/input/{saved_filename}"
