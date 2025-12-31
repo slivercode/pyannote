@@ -200,36 +200,15 @@ class VideoTimelineSyncProcessor:
         needs_slowdown_count = 0
         warnings = []
         
-        # 跟踪累积时间偏移的趋势
-        cumulative_offsets = []
-        slowdown_threshold_ms = 2000  # 提高阈值到2秒
-        
         for orig, upd in zip(original_entries, updated_entries):
             duration_diff = upd.duration_ms - orig.duration_ms
             slowdown_ratio = upd.duration_ms / orig.duration_ms if orig.duration_ms > 0 else 1.0
             
-            # 计算累积时间偏移
-            cumulative_offset_ms = upd.end_ms - orig.end_ms
-            cumulative_offsets.append(cumulative_offset_ms)
-            
-            # 判断是否需要慢放:
-            # 1. 累积偏移超过阈值(2秒)
-            # 2. 当前片段时长差异 > 10ms
-            # 3. 慢放比例不接近1.0
-            # 4. 累积偏移呈增长趋势(最近3个偏移都在增加)
-            is_offset_increasing = False
-            if len(cumulative_offsets) >= 3:
-                recent_offsets = cumulative_offsets[-3:]
-                is_offset_increasing = all(
-                    recent_offsets[i] < recent_offsets[i+1] 
-                    for i in range(len(recent_offsets)-1)
-                )
-            
+            # 简化判断逻辑：只要时长比例不是1.0就需要慢放
+            # 这样确保每个片段都按照新旧SRT的比例进行调整
             needs_slowdown = (
-                cumulative_offset_ms > slowdown_threshold_ms and
-                abs(duration_diff) > 10 and 
-                abs(slowdown_ratio - 1.0) > 0.01 and
-                (is_offset_increasing or cumulative_offset_ms > 3000)  # 增长趋势或偏移>3秒
+                abs(slowdown_ratio - 1.0) > 0.01 and  # 比例差异>1%
+                abs(duration_diff) > 50  # 时长差异>50ms，避免处理微小差异
             )
             
             warning = None
@@ -239,14 +218,6 @@ class VideoTimelineSyncProcessor:
             elif slowdown_ratio < 1.0 and needs_slowdown:
                 warning = f"需要加速 {slowdown_ratio:.2f}x (配音短于画面)"
                 warnings.append(f"字幕{orig.index}: {warning}")
-            
-            # 添加累积偏移信息到warning
-            if cumulative_offset_ms > slowdown_threshold_ms:
-                offset_info = f"累积偏移: {cumulative_offset_ms/1000:.2f}秒"
-                if warning:
-                    warning += f" | {offset_info}"
-                elif needs_slowdown:
-                    warning = offset_info
             
             timeline_diffs.append(TimelineDiff(
                 index=orig.index,
@@ -910,14 +881,37 @@ class VideoTimelineSyncProcessor:
         print(f"包含间隔片段: {'是' if self.include_gaps else '否'}")
         
         try:
-            # 步骤1：分析时间轴差异（会自动重新计算慢放比例）
+            # 步骤1：分析时间轴差异
             timeline_diffs = self.analyze_timeline_diff()
             
-            # 步骤2：切割视频片段（包含间隔）
-            segments = self.cut_video_segments(timeline_diffs, include_gaps=self.include_gaps)
+            # 获取视频和音频时长
+            video_duration = self._get_video_duration()
+            audio_duration = self._get_audio_duration()
             
-            # 步骤3：慢放视频片段（使用调整后的timeline_diffs）
-            processed_segments = self.slowdown_segments(segments, timeline_diffs)
+            print(f"\n📊 时长信息:")
+            print(f"   原始视频时长: {video_duration:.2f}秒")
+            print(f"   更新音频时长: {audio_duration:.2f}秒")
+            
+            # 判断处理策略
+            if abs(video_duration - audio_duration) < 1.0:
+                # 策略A：视频和音频时长接近，直接按更新SRT切割
+                print(f"\n📝 策略A：视频时长与音频接近，直接按更新SRT切割")
+                segments = self._cut_by_updated_srt(timeline_diffs)
+                processed_segments = segments  # 不需要慢放
+            else:
+                # 策略B：视频和音频时长差异大，先全局慢放再切割
+                print(f"\n📝 策略B：视频时长与音频差异大，先全局慢放再切割")
+                
+                # 计算全局慢放比例
+                global_ratio = audio_duration / video_duration if video_duration > 0 else 1.0
+                print(f"   全局慢放比例: {global_ratio:.3f}x")
+                
+                # 全局慢放视频
+                slowed_video = self._slowdown_full_video(global_ratio)
+                
+                # 按更新SRT切割慢放后的视频
+                segments = self._cut_slowed_video_by_updated_srt(slowed_video, timeline_diffs)
+                processed_segments = segments
             
             # 步骤4：拼接视频片段
             temp_video = self.temp_dir / "concatenated.mp4"
@@ -959,6 +953,137 @@ class VideoTimelineSyncProcessor:
                 'success': False,
                 'error': str(e)
             }
+    
+    def _slowdown_full_video(self, ratio: float) -> Path:
+        """
+        全局慢放整个视频
+        
+        Args:
+            ratio: 慢放比例
+            
+        Returns:
+            慢放后的视频路径
+        """
+        print(f"\n🐌 全局慢放视频 ({ratio:.3f}x)...")
+        
+        output_path = self.temp_dir / "slowed_full.mp4"
+        
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', str(self.original_video_path),
+            '-filter:v', f'setpts={ratio}*PTS',
+            '-an',  # 移除音频
+            '-c:v', 'libx264',
+            '-preset', self.quality_preset,
+            '-crf', '18',
+            str(output_path)
+        ]
+        
+        try:
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                check=True
+            )
+            print(f"✅ 全局慢放完成: {output_path}")
+            return output_path
+        except subprocess.CalledProcessError as e:
+            print(f"❌ 全局慢放失败: {e}")
+            raise
+    
+    def _cut_by_updated_srt(self, timeline_diffs: List[TimelineDiff]) -> List[Path]:
+        """
+        直接按更新SRT切割原始视频（策略A）
+        
+        Args:
+            timeline_diffs: 时间轴差异列表
+            
+        Returns:
+            切割后的片段列表
+        """
+        print("\n✂️  按更新SRT切割视频...")
+        
+        segments = []
+        
+        for i, diff in enumerate(timeline_diffs):
+            print(f"切割片段 {i+1}/{len(timeline_diffs)}: "
+                  f"{diff.updated_entry.start_sec:.2f}s - {diff.updated_entry.end_sec:.2f}s")
+            
+            output_path = self.segments_dir / f"segment_{i+1:04d}.mp4"
+            
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(self.original_video_path),
+                '-ss', str(diff.updated_entry.start_sec),
+                '-to', str(diff.updated_entry.end_sec),
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '18',
+                '-c:a', 'aac',
+                '-avoid_negative_ts', 'make_zero',
+                str(output_path)
+            ]
+            
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                segments.append(output_path)
+            except subprocess.CalledProcessError as e:
+                print(f"   ❌ 切割失败: {e}")
+                raise
+        
+        print(f"\n✅ 切割完成: {len(segments)} 个片段")
+        return segments
+    
+    def _cut_slowed_video_by_updated_srt(
+        self, 
+        slowed_video: Path, 
+        timeline_diffs: List[TimelineDiff]
+    ) -> List[Path]:
+        """
+        按更新SRT切割慢放后的视频（策略B）
+        
+        Args:
+            slowed_video: 慢放后的视频路径
+            timeline_diffs: 时间轴差异列表
+            
+        Returns:
+            切割后的片段列表
+        """
+        print("\n✂️  按更新SRT切割慢放后的视频...")
+        
+        segments = []
+        
+        for i, diff in enumerate(timeline_diffs):
+            print(f"切割片段 {i+1}/{len(timeline_diffs)}: "
+                  f"{diff.updated_entry.start_sec:.2f}s - {diff.updated_entry.end_sec:.2f}s")
+            
+            output_path = self.segments_dir / f"segment_{i+1:04d}.mp4"
+            
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(slowed_video),
+                '-ss', str(diff.updated_entry.start_sec),
+                '-to', str(diff.updated_entry.end_sec),
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '18',
+                '-c:a', 'aac',
+                '-avoid_negative_ts', 'make_zero',
+                str(output_path)
+            ]
+            
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                segments.append(output_path)
+            except subprocess.CalledProcessError as e:
+                print(f"   ❌ 切割失败: {e}")
+                raise
+        
+        print(f"\n✅ 切割完成: {len(segments)} 个片段")
+        return segments
 
 
 if __name__ == "__main__":
