@@ -52,6 +52,19 @@ class TimelineDiff:
     warning: Optional[str] = None
 
 
+@dataclass
+class SegmentGroup:
+    """分段组（连续的字幕片段）"""
+    start_index: int  # 起始字幕索引
+    end_index: int  # 结束字幕索引
+    diffs: List[TimelineDiff]  # 包含的时间轴差异
+    avg_ratio: float  # 平均调整比例
+    needs_adjustment: bool  # 是否需要调整
+    original_start_sec: float  # 原始开始时间
+    original_end_sec: float  # 原始结束时间
+    target_duration_sec: float  # 目标时长
+
+
 class VideoTimelineSyncProcessor:
     """视频时间轴同步处理器"""
     
@@ -93,6 +106,10 @@ class VideoTimelineSyncProcessor:
         self.enable_frame_interpolation = enable_frame_interpolation
         self.include_gaps = include_gaps
         self.slowdown_start_index = slowdown_start_index
+        
+        # 分段批量调整参数
+        self.ratio_threshold = 0.05  # 调整比例差异阈值（5%）
+        self.ratio_tolerance = 0.15  # 组内比例容差（15%）
         
         # 创建输出目录
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -913,21 +930,20 @@ class VideoTimelineSyncProcessor:
             print(f"   原始视频时长: {video_duration:.2f}秒")
             print(f"   更新音频时长: {audio_duration:.2f}秒")
             
-            # 统一处理策略：按原始SRT切割，然后单独调整每个片段
-            print(f"\n📝 处理策略：按原始SRT切割视频，对需要调整的片段进行单独缩放")
+            # 统一处理策略：分段批量调整
+            print(f"\n📝 处理策略：分段批量调整（合并相近片段，提高效率）")
+            print(f"   调整阈值: {self.ratio_threshold*100:.0f}%")
+            print(f"   合并容差: {self.ratio_tolerance*100:.0f}%")
             
-            # 步骤2：按原始SRT切割视频（包含间隔）
-            segments = self._cut_by_original_srt(timeline_diffs)
+            # 步骤2：按分段组切割和调整视频
+            processed_segments = self._cut_and_adjust_by_groups(timeline_diffs)
             
-            # 步骤3：对每个片段进行单独调整（慢放/加速）
-            processed_segments = self._adjust_segments_individually(segments, timeline_diffs)
-            
-            # 步骤4：拼接视频片段
+            # 步骤3：拼接视频片段
             temp_video = self.temp_dir / "concatenated.mp4"
             if not self.concatenate_segments(processed_segments, temp_video):
                 raise Exception("视频拼接失败")
             
-            # 步骤5：替换音轨和添加字幕
+            # 步骤4：替换音轨和添加字幕
             final_output = self.output_dir / "synced_video.mp4"
             if not self.replace_audio_and_add_subtitle(
                 temp_video,
@@ -1106,6 +1122,316 @@ class VideoTimelineSyncProcessor:
         
         print(f"\n✅ 切割完成: {len(segments)} 个片段（包含字幕和间隔）")
         return segments
+    
+    def _group_timeline_diffs(self, timeline_diffs: List[TimelineDiff]) -> List[SegmentGroup]:
+        """
+        将时间轴差异分组，合并调整比例相近的连续字幕
+        
+        策略：
+        1. 差异<阈值的连续字幕合并为一组（不调整）
+        2. 调整比例相近的连续字幕合并为一组（统一调整）
+        3. 调整比例差异大的字幕单独成组
+        
+        Args:
+            timeline_diffs: 时间轴差异列表
+            
+        Returns:
+            分段组列表
+        """
+        print("\n" + "="*60)
+        print("📦 分析并合并相近片段")
+        print("="*60)
+        
+        if not timeline_diffs:
+            return []
+        
+        groups = []
+        current_group_diffs = [timeline_diffs[0]]
+        current_group_start = 0
+        
+        for i in range(1, len(timeline_diffs)):
+            prev_diff = timeline_diffs[i-1]
+            curr_diff = timeline_diffs[i]
+            
+            prev_ratio = prev_diff.slowdown_ratio
+            curr_ratio = curr_diff.slowdown_ratio
+            
+            # 判断是否可以合并到当前组
+            # 条件1：两者都不需要调整（差异<阈值）
+            both_no_adjustment = (
+                abs(prev_ratio - 1.0) <= self.ratio_threshold and
+                abs(curr_ratio - 1.0) <= self.ratio_threshold
+            )
+            
+            # 条件2：两者调整比例相近（差异<容差）
+            similar_ratio = abs(curr_ratio - prev_ratio) <= self.ratio_tolerance
+            
+            can_merge = both_no_adjustment or similar_ratio
+            
+            if can_merge:
+                # 合并到当前组
+                current_group_diffs.append(curr_diff)
+            else:
+                # 创建新组
+                groups.append(self._create_segment_group(
+                    current_group_start,
+                    i - 1,
+                    current_group_diffs
+                ))
+                
+                # 开始新组
+                current_group_diffs = [curr_diff]
+                current_group_start = i
+        
+        # 添加最后一组
+        groups.append(self._create_segment_group(
+            current_group_start,
+            len(timeline_diffs) - 1,
+            current_group_diffs
+        ))
+        
+        # 显示分组信息
+        print(f"\n📊 分组结果: {len(timeline_diffs)} 条字幕 → {len(groups)} 个分段")
+        for i, group in enumerate(groups):
+            subtitle_count = group.end_index - group.start_index + 1
+            if group.needs_adjustment:
+                print(f"  分段{i+1}: 字幕{group.start_index+1}-{group.end_index+1} "
+                      f"({subtitle_count}条) - 调整 {group.avg_ratio:.2f}x")
+            else:
+                print(f"  分段{i+1}: 字幕{group.start_index+1}-{group.end_index+1} "
+                      f"({subtitle_count}条) - 无需调整")
+        
+        return groups
+    
+    def _create_segment_group(
+        self,
+        start_index: int,
+        end_index: int,
+        diffs: List[TimelineDiff]
+    ) -> SegmentGroup:
+        """
+        创建分段组
+        
+        Args:
+            start_index: 起始索引
+            end_index: 结束索引
+            diffs: 时间轴差异列表
+            
+        Returns:
+            分段组
+        """
+        # 计算平均调整比例
+        total_original_duration = sum(d.original_entry.duration_ms for d in diffs)
+        total_target_duration = sum(d.updated_entry.duration_ms for d in diffs)
+        avg_ratio = total_target_duration / total_original_duration if total_original_duration > 0 else 1.0
+        
+        # 判断是否需要调整
+        needs_adjustment = abs(avg_ratio - 1.0) > self.ratio_threshold
+        
+        # 获取时间范围
+        original_start_sec = diffs[0].original_entry.start_sec
+        original_end_sec = diffs[-1].original_entry.end_sec
+        target_duration_sec = total_target_duration / 1000.0
+        
+        return SegmentGroup(
+            start_index=start_index,
+            end_index=end_index,
+            diffs=diffs,
+            avg_ratio=avg_ratio,
+            needs_adjustment=needs_adjustment,
+            original_start_sec=original_start_sec,
+            original_end_sec=original_end_sec,
+            target_duration_sec=target_duration_sec
+        )
+    
+    def _cut_and_adjust_by_groups(
+        self,
+        timeline_diffs: List[TimelineDiff]
+    ) -> List[Path]:
+        """
+        按分段组切割和调整视频
+        
+        流程：
+        1. 将时间轴差异分组
+        2. 对每个组：
+           - 切割整段视频（包含多条字幕）
+           - 如果需要调整，对整段进行统一调整
+           - 如果不需要调整，直接保留
+        3. 处理间隔片段
+        
+        Args:
+            timeline_diffs: 时间轴差异列表
+            
+        Returns:
+            处理后的片段列表
+        """
+        print("\n" + "="*60)
+        print("✂️  按分段组切割和调整视频")
+        print("="*60)
+        
+        # 步骤1：分组
+        groups = self._group_timeline_diffs(timeline_diffs)
+        
+        # 步骤2：切割和调整
+        processed_segments = []
+        segment_counter = 0
+        
+        # 获取视频总时长
+        video_duration = self._get_video_duration()
+        
+        # 处理开头间隔
+        if len(groups) > 0:
+            first_start = groups[0].original_start_sec
+            if first_start > 0.1:
+                segment_counter += 1
+                initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
+                
+                print(f"\n切割开头间隔: 0.00s - {first_start:.2f}s")
+                
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(self.original_video_path),
+                    '-ss', '0',
+                    '-to', str(first_start),
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset,
+                    '-crf', '18',
+                    '-an',
+                    '-avoid_negative_ts', 'make_zero',
+                    str(initial_gap_output)
+                ]
+                
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                    processed_segments.append(initial_gap_output)
+                    print(f"  ✅ 开头间隔已添加")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ⚠️ 切割开头间隔失败: {e}")
+        
+        # 处理每个分段组
+        for i, group in enumerate(groups):
+            segment_counter += 1
+            
+            # 切割整段视频
+            group_output = self.segments_dir / f"segment_{segment_counter:04d}_group.mp4"
+            
+            subtitle_count = group.end_index - group.start_index + 1
+            print(f"\n分段{i+1}/{len(groups)}: 字幕{group.start_index+1}-{group.end_index+1} ({subtitle_count}条)")
+            print(f"  切割: {group.original_start_sec:.2f}s - {group.original_end_sec:.2f}s")
+            
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(self.original_video_path),
+                '-ss', str(group.original_start_sec),
+                '-to', str(group.original_end_sec),
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '18',
+                '-an',
+                '-avoid_negative_ts', 'make_zero',
+                str(group_output)
+            ]
+            
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                
+                # 判断是否需要调整
+                if group.needs_adjustment:
+                    # 限制调整比例
+                    actual_ratio = min(group.avg_ratio, self.max_slowdown_ratio)
+                    
+                    adjustment_type = "慢放" if actual_ratio > 1.0 else "加速"
+                    print(f"  {adjustment_type}: {actual_ratio:.2f}x")
+                    
+                    # 调整整段
+                    adjusted_output = self.slowed_dir / f"adjusted_group_{i+1:04d}.mp4"
+                    
+                    success = self.slowdown_video_segment(
+                        group_output,
+                        adjusted_output,
+                        actual_ratio,
+                        group.target_duration_sec
+                    )
+                    
+                    if success:
+                        processed_segments.append(adjusted_output)
+                        print(f"  ✅ 调整完成")
+                    else:
+                        print(f"  ⚠️ 调整失败，使用原始片段")
+                        processed_segments.append(group_output)
+                else:
+                    print(f"  保持原样（差异<{self.ratio_threshold*100:.0f}%）")
+                    processed_segments.append(group_output)
+                
+            except subprocess.CalledProcessError as e:
+                print(f"  ❌ 切割失败: {e}")
+                raise
+            
+            # 处理组之间的间隔
+            if i < len(groups) - 1:
+                gap_start = group.original_end_sec
+                gap_end = groups[i + 1].original_start_sec
+                gap_duration = gap_end - gap_start
+                
+                if gap_duration > 0.1:
+                    segment_counter += 1
+                    gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
+                    
+                    print(f"  切割间隔: {gap_start:.2f}s - {gap_end:.2f}s")
+                    
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-i', str(self.original_video_path),
+                        '-ss', str(gap_start),
+                        '-to', str(gap_end),
+                        '-c:v', 'libx264',
+                        '-preset', self.quality_preset,
+                        '-crf', '18',
+                        '-an',
+                        '-avoid_negative_ts', 'make_zero',
+                        str(gap_output)
+                    ]
+                    
+                    try:
+                        subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                        processed_segments.append(gap_output)
+                    except subprocess.CalledProcessError as e:
+                        print(f"  ⚠️ 切割间隔失败: {e}")
+        
+        # 处理尾部间隔
+        if len(groups) > 0 and video_duration > 0:
+            last_end = groups[-1].original_end_sec
+            tail_gap_duration = video_duration - last_end
+            
+            if tail_gap_duration > 0.1:
+                segment_counter += 1
+                tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
+                
+                print(f"\n切割尾部间隔: {last_end:.2f}s - {video_duration:.2f}s")
+                
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(self.original_video_path),
+                    '-ss', str(last_end),
+                    '-to', str(video_duration),
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset,
+                    '-crf', '18',
+                    '-an',
+                    '-avoid_negative_ts', 'make_zero',
+                    str(tail_gap_output)
+                ]
+                
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                    processed_segments.append(tail_gap_output)
+                    print(f"  ✅ 尾部间隔已添加")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ⚠️ 切割尾部间隔失败: {e}")
+        
+        print(f"\n✅ 处理完成: {len(processed_segments)} 个片段")
+        
+        return processed_segments
     
     def _adjust_segments_individually(
         self,
