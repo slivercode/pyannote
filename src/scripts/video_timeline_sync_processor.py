@@ -204,20 +204,23 @@ class VideoTimelineSyncProcessor:
             duration_diff = upd.duration_ms - orig.duration_ms
             slowdown_ratio = upd.duration_ms / orig.duration_ms if orig.duration_ms > 0 else 1.0
             
-            # 简化判断逻辑：只要时长比例不是1.0就需要慢放
-            # 这样确保每个片段都按照新旧SRT的比例进行调整
+            # 判断是否需要慢放
+            # 1. 比例差异>1% 且 时长差异>50ms
+            # 2. 慢放比例 > 1.0（配音长于画面，需要慢放）
             needs_slowdown = (
                 abs(slowdown_ratio - 1.0) > 0.01 and  # 比例差异>1%
-                abs(duration_diff) > 50  # 时长差异>50ms，避免处理微小差异
+                abs(duration_diff) > 50 and  # 时长差异>50ms
+                slowdown_ratio > 1.0  # 需要慢放（不是加速）
             )
             
             warning = None
             if slowdown_ratio > self.max_slowdown_ratio:
                 warning = f"慢放倍率 {slowdown_ratio:.2f}x 超过最大限制 {self.max_slowdown_ratio}x"
                 warnings.append(f"字幕{orig.index}: {warning}")
-            elif slowdown_ratio < 1.0 and needs_slowdown:
+            elif slowdown_ratio < 1.0 and abs(slowdown_ratio - 1.0) > 0.01:
                 warning = f"需要加速 {slowdown_ratio:.2f}x (配音短于画面)"
                 warnings.append(f"字幕{orig.index}: {warning}")
+                # 注意：需要加速的片段，needs_slowdown = False
             
             timeline_diffs.append(TimelineDiff(
                 index=orig.index,
@@ -879,6 +882,12 @@ class VideoTimelineSyncProcessor:
         """
         执行完整的视频时间轴同步流程
         
+        核心逻辑：
+        1. 按原始SRT切割视频（保持画面内容对应）
+        2. 对比每个片段的原始时长和目标时长
+        3. 对需要调整的片段进行单独慢放/加速
+        4. 拼接所有片段
+        
         Returns:
             处理结果字典
         """
@@ -904,26 +913,14 @@ class VideoTimelineSyncProcessor:
             print(f"   原始视频时长: {video_duration:.2f}秒")
             print(f"   更新音频时长: {audio_duration:.2f}秒")
             
-            # 判断处理策略
-            if abs(video_duration - audio_duration) < 1.0:
-                # 策略A：视频和音频时长接近，直接按更新SRT切割
-                print(f"\n📝 策略A：视频时长与音频接近，直接按更新SRT切割")
-                segments = self._cut_by_updated_srt(timeline_diffs)
-                processed_segments = segments  # 不需要慢放
-            else:
-                # 策略B：视频和音频时长差异大，先全局慢放再切割
-                print(f"\n📝 策略B：视频时长与音频差异大，先全局慢放再切割")
-                
-                # 计算全局慢放比例
-                global_ratio = audio_duration / video_duration if video_duration > 0 else 1.0
-                print(f"   全局慢放比例: {global_ratio:.3f}x")
-                
-                # 全局慢放视频
-                slowed_video = self._slowdown_full_video(global_ratio)
-                
-                # 按更新SRT切割慢放后的视频
-                segments = self._cut_slowed_video_by_updated_srt(slowed_video, timeline_diffs)
-                processed_segments = segments
+            # 统一处理策略：按原始SRT切割，然后单独调整每个片段
+            print(f"\n📝 处理策略：按原始SRT切割视频，对需要调整的片段进行单独缩放")
+            
+            # 步骤2：按原始SRT切割视频（包含间隔）
+            segments = self._cut_by_original_srt(timeline_diffs)
+            
+            # 步骤3：对每个片段进行单独调整（慢放/加速）
+            processed_segments = self._adjust_segments_individually(segments, timeline_diffs)
             
             # 步骤4：拼接视频片段
             temp_video = self.temp_dir / "concatenated.mp4"
@@ -965,6 +962,241 @@ class VideoTimelineSyncProcessor:
                 'success': False,
                 'error': str(e)
             }
+    
+    def _cut_by_original_srt(self, timeline_diffs: List[TimelineDiff]) -> List[Path]:
+        """
+        按原始SRT切割原始视频（包含间隔片段）
+        
+        核心：保持画面内容与原始字幕对应
+        
+        Args:
+            timeline_diffs: 时间轴差异列表
+            
+        Returns:
+            切割后的片段列表（包含字幕片段和间隔片段）
+        """
+        print("\n✂️  按原始SRT切割视频（包含间隔）...")
+        
+        segments = []
+        segment_counter = 0
+        
+        # 获取视频总时长
+        video_duration = self._get_video_duration()
+        
+        # 0. 切割第一个字幕之前的初始间隔（如果存在）
+        if len(timeline_diffs) > 0:
+            first_start = timeline_diffs[0].original_entry.start_sec
+            if first_start > 0.1:
+                segment_counter += 1
+                initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
+                
+                print(f"切割开头间隔: 0.00s - {first_start:.2f}s")
+                
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(self.original_video_path),
+                    '-ss', '0',
+                    '-to', str(first_start),
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset,
+                    '-crf', '18',
+                    '-an',  # 移除音频
+                    '-avoid_negative_ts', 'make_zero',
+                    str(initial_gap_output)
+                ]
+                
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                    segments.append(initial_gap_output)
+                    print(f"  ✅ 开头间隔已添加")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ⚠️ 切割开头间隔失败: {e}")
+        
+        # 1. 切割字幕片段和中间间隔
+        for i, diff in enumerate(timeline_diffs):
+            # 切割字幕片段（按原始SRT）
+            segment_counter += 1
+            subtitle_output = self.segments_dir / f"segment_{segment_counter:04d}_subtitle.mp4"
+            
+            print(f"切割字幕片段 {i+1}/{len(timeline_diffs)}: "
+                  f"{diff.original_entry.start_sec:.2f}s - {diff.original_entry.end_sec:.2f}s "
+                  f"(原始时长: {diff.original_entry.duration_ms/1000:.2f}s)")
+            
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(self.original_video_path),
+                '-ss', str(diff.original_entry.start_sec),
+                '-to', str(diff.original_entry.end_sec),
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '18',
+                '-an',  # 移除音频
+                '-avoid_negative_ts', 'make_zero',
+                str(subtitle_output)
+            ]
+            
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                segments.append(subtitle_output)
+            except subprocess.CalledProcessError as e:
+                print(f"   ❌ 切割字幕片段失败: {e}")
+                raise
+            
+            # 切割间隔片段（如果存在下一个字幕）
+            if i < len(timeline_diffs) - 1:
+                gap_start = diff.original_entry.end_sec
+                gap_end = timeline_diffs[i + 1].original_entry.start_sec
+                gap_duration = gap_end - gap_start
+                
+                if gap_duration > 0.1:
+                    segment_counter += 1
+                    gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
+                    
+                    print(f"  切割间隔: {gap_start:.2f}s - {gap_end:.2f}s")
+                    
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-i', str(self.original_video_path),
+                        '-ss', str(gap_start),
+                        '-to', str(gap_end),
+                        '-c:v', 'libx264',
+                        '-preset', self.quality_preset,
+                        '-crf', '18',
+                        '-an',  # 移除音频
+                        '-avoid_negative_ts', 'make_zero',
+                        str(gap_output)
+                    ]
+                    
+                    try:
+                        subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                        segments.append(gap_output)
+                    except subprocess.CalledProcessError as e:
+                        print(f"   ⚠️ 切割间隔失败: {e}")
+        
+        # 2. 切割尾部间隔（如果存在）
+        if len(timeline_diffs) > 0 and video_duration > 0:
+            last_end = timeline_diffs[-1].original_entry.end_sec
+            tail_gap_duration = video_duration - last_end
+            
+            if tail_gap_duration > 0.1:
+                segment_counter += 1
+                tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
+                
+                print(f"切割尾部间隔: {last_end:.2f}s - {video_duration:.2f}s")
+                
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(self.original_video_path),
+                    '-ss', str(last_end),
+                    '-to', str(video_duration),
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset,
+                    '-crf', '18',
+                    '-an',  # 移除音频
+                    '-avoid_negative_ts', 'make_zero',
+                    str(tail_gap_output)
+                ]
+                
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                    segments.append(tail_gap_output)
+                    print(f"  ✅ 尾部间隔已添加")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ⚠️ 切割尾部间隔失败: {e}")
+        
+        print(f"\n✅ 切割完成: {len(segments)} 个片段（包含字幕和间隔）")
+        return segments
+    
+    def _adjust_segments_individually(
+        self,
+        segments: List[Path],
+        timeline_diffs: List[TimelineDiff]
+    ) -> List[Path]:
+        """
+        对每个字幕片段进行单独调整（慢放/加速）
+        
+        核心逻辑：
+        1. 间隔片段保持不变
+        2. 字幕片段：对比原始时长和目标时长
+        3. 如果需要调整（差异>5%），进行慢放/加速
+        
+        Args:
+            segments: 切割后的片段列表（包含字幕和间隔）
+            timeline_diffs: 时间轴差异列表
+            
+        Returns:
+            调整后的片段列表
+        """
+        print("\n" + "="*60)
+        print("🔧 对字幕片段进行单独调整")
+        print("="*60)
+        
+        processed_segments = []
+        diff_index = 0
+        adjusted_count = 0
+        
+        for i, segment in enumerate(segments):
+            # 判断是否是间隔片段
+            is_gap = '_gap' in segment.name
+            
+            if is_gap:
+                # 间隔片段直接保留
+                print(f"保留间隔片段 {i+1}/{len(segments)}: {segment.name}")
+                processed_segments.append(segment)
+            else:
+                # 字幕片段，检查是否需要调整
+                if diff_index < len(timeline_diffs):
+                    diff = timeline_diffs[diff_index]
+                    
+                    original_duration = diff.original_entry.duration_ms / 1000.0
+                    target_duration = diff.updated_entry.duration_ms / 1000.0
+                    ratio = target_duration / original_duration if original_duration > 0 else 1.0
+                    
+                    # 判断是否需要调整（差异>5%）
+                    needs_adjustment = abs(ratio - 1.0) > 0.05
+                    
+                    if needs_adjustment:
+                        # 限制调整比例
+                        if ratio > self.max_slowdown_ratio:
+                            actual_ratio = self.max_slowdown_ratio
+                            print(f"字幕片段 {diff_index+1}: 需要 {ratio:.2f}x → 限制为 {actual_ratio:.2f}x")
+                        else:
+                            actual_ratio = ratio
+                            adjustment_type = "慢放" if ratio > 1.0 else "加速"
+                            print(f"字幕片段 {diff_index+1}: {adjustment_type} {actual_ratio:.2f}x "
+                                  f"({original_duration:.2f}s → {target_duration:.2f}s)")
+                        
+                        # 创建调整后的片段
+                        output_path = self.slowed_dir / f"adjusted_{diff_index+1:04d}.mp4"
+                        
+                        success = self.slowdown_video_segment(
+                            segment,
+                            output_path,
+                            actual_ratio,
+                            target_duration
+                        )
+                        
+                        if success:
+                            processed_segments.append(output_path)
+                            adjusted_count += 1
+                        else:
+                            print(f"   ⚠️ 调整失败，使用原始片段")
+                            processed_segments.append(segment)
+                    else:
+                        # 不需要调整
+                        print(f"保留字幕片段 {diff_index+1}: 时长差异<5%，无需调整")
+                        processed_segments.append(segment)
+                    
+                    diff_index += 1
+                else:
+                    # 超出范围，直接保留
+                    print(f"保留片段 {i+1}/{len(segments)}: 超出范围")
+                    processed_segments.append(segment)
+        
+        print(f"\n✅ 调整完成: {len(processed_segments)} 个片段")
+        print(f"   需要调整的片段: {adjusted_count}")
+        
+        return processed_segments
     
     def _slowdown_full_video(self, ratio: float) -> Path:
         """
@@ -1150,19 +1382,24 @@ class VideoTimelineSyncProcessor:
     def _cut_slowed_video_by_updated_srt(
         self, 
         slowed_video: Path, 
-        timeline_diffs: List[TimelineDiff]
+        timeline_diffs: List[TimelineDiff],
+        global_ratio: float
     ) -> List[Path]:
         """
         按更新SRT切割慢放后的视频（策略B）- 包含间隔片段
         
+        注意：慢放后的视频时长已经改变，需要将时间轴也按比例调整
+        
         Args:
             slowed_video: 慢放后的视频路径
             timeline_diffs: 时间轴差异列表
+            global_ratio: 全局慢放比例
             
         Returns:
             切割后的片段列表（包含字幕片段和间隔片段）
         """
         print("\n✂️  按更新SRT切割慢放后的视频（包含间隔）...")
+        print(f"   注意：时间轴需要按全局慢放比例 {global_ratio:.3f}x 调整")
         
         segments = []
         segment_counter = 0
@@ -1173,17 +1410,20 @@ class VideoTimelineSyncProcessor:
         # 0. 切割第一个字幕之前的初始间隔（如果存在）
         if len(timeline_diffs) > 0:
             first_start = timeline_diffs[0].updated_entry.start_sec
-            if first_start > 0.1:
+            # ✅ 调整时间轴：慢放后的时间 = 原始时间 × 全局比例
+            first_start_slowed = first_start * global_ratio
+            
+            if first_start_slowed > 0.1:
                 segment_counter += 1
                 initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
                 
-                print(f"切割开头间隔: 0.00s - {first_start:.2f}s")
+                print(f"切割开头间隔: 0.00s - {first_start_slowed:.2f}s（原始: 0.00s - {first_start:.2f}s）")
                 
                 cmd = [
                     'ffmpeg', '-y',
                     '-i', str(slowed_video),
                     '-ss', '0',
-                    '-to', str(first_start),
+                    '-to', str(first_start_slowed),
                     '-c:v', 'libx264',
                     '-preset', self.quality_preset,
                     '-crf', '18',
@@ -1205,14 +1445,18 @@ class VideoTimelineSyncProcessor:
             segment_counter += 1
             subtitle_output = self.segments_dir / f"segment_{segment_counter:04d}_subtitle.mp4"
             
+            # ✅ 调整时间轴：慢放后的时间 = 原始时间 × 全局比例
+            start_slowed = diff.updated_entry.start_sec * global_ratio
+            end_slowed = diff.updated_entry.end_sec * global_ratio
+            
             print(f"切割字幕片段 {i+1}/{len(timeline_diffs)}: "
-                  f"{diff.updated_entry.start_sec:.2f}s - {diff.updated_entry.end_sec:.2f}s")
+                  f"{start_slowed:.2f}s - {end_slowed:.2f}s（原始: {diff.updated_entry.start_sec:.2f}s - {diff.updated_entry.end_sec:.2f}s）")
             
             cmd = [
                 'ffmpeg', '-y',
                 '-i', str(slowed_video),
-                '-ss', str(diff.updated_entry.start_sec),
-                '-to', str(diff.updated_entry.end_sec),
+                '-ss', str(start_slowed),
+                '-to', str(end_slowed),
                 '-c:v', 'libx264',
                 '-preset', self.quality_preset,
                 '-crf', '18',
@@ -1234,17 +1478,22 @@ class VideoTimelineSyncProcessor:
                 gap_end = timeline_diffs[i + 1].updated_entry.start_sec
                 gap_duration = gap_end - gap_start
                 
-                if gap_duration > 0.1:
+                # ✅ 调整时间轴
+                gap_start_slowed = gap_start * global_ratio
+                gap_end_slowed = gap_end * global_ratio
+                gap_duration_slowed = gap_end_slowed - gap_start_slowed
+                
+                if gap_duration_slowed > 0.1:
                     segment_counter += 1
                     gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
                     
-                    print(f"  切割间隔: {gap_start:.2f}s - {gap_end:.2f}s")
+                    print(f"  切割间隔: {gap_start_slowed:.2f}s - {gap_end_slowed:.2f}s（原始: {gap_start:.2f}s - {gap_end:.2f}s）")
                     
                     cmd = [
                         'ffmpeg', '-y',
                         '-i', str(slowed_video),
-                        '-ss', str(gap_start),
-                        '-to', str(gap_end),
+                        '-ss', str(gap_start_slowed),
+                        '-to', str(gap_end_slowed),
                         '-c:v', 'libx264',
                         '-preset', self.quality_preset,
                         '-crf', '18',
@@ -1262,18 +1511,20 @@ class VideoTimelineSyncProcessor:
         # 2. 切割尾部间隔（如果存在）
         if len(timeline_diffs) > 0 and slowed_video_duration > 0:
             last_end = timeline_diffs[-1].updated_entry.end_sec
-            tail_gap_duration = slowed_video_duration - last_end
+            # ✅ 调整时间轴
+            last_end_slowed = last_end * global_ratio
+            tail_gap_duration = slowed_video_duration - last_end_slowed
             
             if tail_gap_duration > 0.1:
                 segment_counter += 1
                 tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
                 
-                print(f"切割尾部间隔: {last_end:.2f}s - {slowed_video_duration:.2f}s")
+                print(f"切割尾部间隔: {last_end_slowed:.2f}s - {slowed_video_duration:.2f}s（原始: {last_end:.2f}s）")
                 
                 cmd = [
                     'ffmpeg', '-y',
                     '-i', str(slowed_video),
-                    '-ss', str(last_end),
+                    '-ss', str(last_end_slowed),
                     '-to', str(slowed_video_duration),
                     '-c:v', 'libx264',
                     '-preset', self.quality_preset,
@@ -1292,6 +1543,116 @@ class VideoTimelineSyncProcessor:
         
         print(f"\n✅ 切割完成: {len(segments)} 个片段（包含字幕和间隔）")
         return segments
+    
+    def _process_segments_with_individual_slowdown(
+        self,
+        segments: List[Path],
+        timeline_diffs: List[TimelineDiff],
+        global_ratio: float
+    ) -> List[Path]:
+        """
+        对切割后的片段进行单独慢放处理
+        
+        策略：
+        1. 全局慢放已经应用（global_ratio）
+        2. 检查每个字幕片段是否需要额外慢放
+        3. 如果需要的慢放比例 > 全局比例，进行二次慢放
+        4. 间隔片段保持不变
+        
+        Args:
+            segments: 切割后的片段列表（包含字幕和间隔）
+            timeline_diffs: 时间轴差异列表
+            global_ratio: 已应用的全局慢放比例
+            
+        Returns:
+            处理后的片段列表
+        """
+        print("\n" + "="*60)
+        print("🔧 对超限片段进行单独慢放")
+        print("="*60)
+        
+        processed_segments = []
+        diff_index = 0
+        needs_additional_slowdown_count = 0
+        
+        for i, segment in enumerate(segments):
+            # 判断是否是间隔片段
+            is_gap = '_gap' in segment.name
+            
+            if is_gap:
+                # 间隔片段直接保留
+                print(f"保留间隔片段 {i+1}/{len(segments)}: {segment.name}")
+                processed_segments.append(segment)
+            else:
+                # 字幕片段，检查是否需要额外慢放
+                if diff_index < len(timeline_diffs):
+                    diff = timeline_diffs[diff_index]
+                    
+                    # 计算需要的总慢放比例
+                    required_total_ratio = diff.slowdown_ratio
+                    
+                    # 跳过需要加速的片段（slowdown_ratio < 1.0）
+                    if required_total_ratio < 1.0:
+                        print(f"跳过字幕片段 {diff_index+1}: 需要加速 {required_total_ratio:.2f}x（保持全局慢放后的状态）")
+                        processed_segments.append(segment)
+                        diff_index += 1
+                        continue
+                    
+                    # 计算还需要的额外慢放比例
+                    # 因为已经应用了global_ratio，所以额外比例 = 总比例 / 全局比例
+                    additional_ratio = required_total_ratio / global_ratio if global_ratio > 0 else 1.0
+                    
+                    # 如果额外比例 > 1.05（需要额外慢放5%以上）且标记为needs_slowdown
+                    if additional_ratio > 1.05 and diff.needs_slowdown:
+                        # 限制额外慢放比例不超过最大值
+                        max_additional_ratio = self.max_slowdown_ratio / global_ratio
+                        actual_additional_ratio = min(additional_ratio, max_additional_ratio)
+                        
+                        # 计算最终能达到的总慢放比例
+                        final_total_ratio = global_ratio * actual_additional_ratio
+                        
+                        print(f"字幕片段 {diff_index+1}: 需要额外慢放")
+                        print(f"   需要的总比例: {required_total_ratio:.2f}x")
+                        print(f"   全局比例: {global_ratio:.2f}x")
+                        print(f"   额外比例: {additional_ratio:.2f}x → {actual_additional_ratio:.2f}x")
+                        print(f"   最终总比例: {final_total_ratio:.2f}x")
+                        
+                        if final_total_ratio < required_total_ratio:
+                            shortage = required_total_ratio - final_total_ratio
+                            print(f"   ⚠️ 受最大限制影响，仍有 {shortage:.2f}x 无法达到")
+                        
+                        # 创建额外慢放后的片段
+                        output_path = self.slowed_dir / f"extra_slowed_{diff_index+1:04d}.mp4"
+                        target_duration = diff.updated_entry.duration_ms / 1000.0
+                        
+                        success = self.slowdown_video_segment(
+                            segment,
+                            output_path,
+                            actual_additional_ratio,
+                            target_duration
+                        )
+                        
+                        if success:
+                            processed_segments.append(output_path)
+                            needs_additional_slowdown_count += 1
+                        else:
+                            print(f"   ⚠️ 额外慢放失败，使用全局慢放后的片段")
+                            processed_segments.append(segment)
+                    else:
+                        # 不需要额外慢放
+                        print(f"保留字幕片段 {diff_index+1}: 全局慢放已足够")
+                        processed_segments.append(segment)
+                    
+                    diff_index += 1
+                else:
+                    # 超出范围，直接保留
+                    print(f"保留片段 {i+1}/{len(segments)}: 超出范围")
+                    processed_segments.append(segment)
+        
+        print(f"\n✅ 处理完成: {len(processed_segments)} 个片段")
+        print(f"   需要额外慢放的片段: {needs_additional_slowdown_count}")
+        
+        return processed_segments
 
 
 if __name__ == "__main__":
