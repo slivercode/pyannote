@@ -36,6 +36,10 @@ class VideoSyncRequest(BaseModel):
     quality_preset: str = "medium"  # 质量预设
     enable_frame_interpolation: bool = True  # 是否启用帧插值
     include_gaps: bool = True  # 是否包含字幕之间的间隔片段
+    
+    # GPU加速选项
+    use_gpu: bool = False  # 是否使用GPU加速
+    gpu_id: int = 0  # GPU设备ID
 
 
 # 视频同步任务字典
@@ -183,7 +187,9 @@ async def start_video_sync(request: VideoSyncRequest):
                 max_slowdown_ratio=request.max_slowdown_ratio,
                 quality_preset=request.quality_preset,
                 enable_frame_interpolation=request.enable_frame_interpolation,
-                include_gaps=request.include_gaps
+                include_gaps=request.include_gaps,
+                use_gpu=request.use_gpu,
+                gpu_id=request.gpu_id
             )
             
             # 如果没有提供视频文件，只进行差异分析

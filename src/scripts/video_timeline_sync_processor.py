@@ -79,7 +79,9 @@ class VideoTimelineSyncProcessor:
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = True,
         include_gaps: bool = True,
-        slowdown_start_index: int = 1
+        slowdown_start_index: int = 1,
+        use_gpu: bool = False,
+        gpu_id: int = 0
     ):
         """
         初始化处理器
@@ -95,6 +97,8 @@ class VideoTimelineSyncProcessor:
             enable_frame_interpolation: 是否启用帧插值
             include_gaps: 是否包含字幕之间的间隔片段（默认True）
             slowdown_start_index: 从第几句开始慢放（默认1，即从第一句开始）
+            use_gpu: 是否使用GPU加速（默认False）
+            gpu_id: GPU设备ID（默认0）
         """
         self.original_video_path = Path(original_video_path)
         self.original_srt_path = Path(original_srt_path)
@@ -106,6 +110,11 @@ class VideoTimelineSyncProcessor:
         self.enable_frame_interpolation = enable_frame_interpolation
         self.include_gaps = include_gaps
         self.slowdown_start_index = slowdown_start_index
+        
+        # GPU加速配置
+        self.use_gpu = use_gpu
+        self.gpu_id = gpu_id
+        self._gpu_available = self._check_gpu_availability()
         
         # 分段批量调整参数
         self.ratio_threshold = 0.05  # 调整比例差异阈值（5%）
@@ -123,6 +132,202 @@ class VideoTimelineSyncProcessor:
         
         self.slowed_dir = self.temp_dir / "slowed"
         self.slowed_dir.mkdir(parents=True, exist_ok=True)
+    
+    def _check_gpu_availability(self) -> bool:
+        """
+        检查GPU是否可用
+        
+        Returns:
+            GPU是否可用
+        """
+        if not self.use_gpu:
+            return False
+        
+        try:
+            # 检查nvidia-smi
+            result = subprocess.run(
+                ['nvidia-smi'],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            
+            if result.returncode == 0:
+                return True
+            else:
+                print("⚠️ GPU不可用：nvidia-smi命令失败")
+                return False
+                
+        except FileNotFoundError:
+            print("⚠️ GPU不可用：未找到nvidia-smi命令")
+            return False
+        except Exception as e:
+            print(f"⚠️ GPU检测失败: {e}")
+            return False
+    
+    def _get_hwaccel_args(self) -> List[str]:
+        """
+        获取硬件加速参数
+        
+        Returns:
+            FFmpeg硬件加速参数列表
+        """
+        if not self._gpu_available:
+            return []
+        
+        # NVIDIA GPU硬件加速参数
+        return [
+            '-hwaccel', 'cuda',
+            '-hwaccel_device', str(self.gpu_id),
+            '-hwaccel_output_format', 'cuda'
+        ]
+    
+    def _get_encoder_args(self, preset: str = None) -> List[str]:
+        """
+        获取编码器参数
+        
+        Args:
+            preset: 质量预设（如果为None，使用self.quality_preset）
+            
+        Returns:
+            FFmpeg编码器参数列表
+        """
+        if preset is None:
+            preset = self.quality_preset
+        
+        if self._gpu_available:
+            # 使用NVIDIA GPU编码器 (h264_nvenc)
+            return [
+                '-c:v', 'h264_nvenc',
+                '-preset', self._map_preset_to_nvenc(preset),
+                '-cq', '23',  # 恒定质量模式（类似CRF）
+                '-b:v', '0'   # 禁用比特率限制
+            ]
+        else:
+            # 使用CPU编码器 (libx264)
+            return [
+                '-c:v', 'libx264',
+                '-preset', preset,
+                '-crf', '18'
+            ]
+    
+    def _map_preset_to_nvenc(self, preset: str) -> str:
+        """
+        将CPU预设映射到NVENC预设
+        
+        Args:
+            preset: CPU预设 (fast/medium/high)
+            
+        Returns:
+            NVENC预设
+        """
+        mapping = {
+            'fast': 'fast',
+            'medium': 'medium',
+            'high': 'slow'
+        }
+        return mapping.get(preset, 'medium')
+    
+    def _build_ffmpeg_cut_cmd(
+        self,
+        input_path: Path,
+        output_path: Path,
+        start_sec: float,
+        end_sec: float,
+        remove_audio: bool = True
+    ) -> List[str]:
+        """
+        构建FFmpeg切割命令
+        
+        Args:
+            input_path: 输入视频路径
+            output_path: 输出视频路径
+            start_sec: 开始时间（秒）
+            end_sec: 结束时间（秒）
+            remove_audio: 是否移除音频
+            
+        Returns:
+            FFmpeg命令列表
+        """
+        cmd = ['ffmpeg', '-y']
+        
+        # 添加硬件加速参数（如果可用）
+        cmd.extend(self._get_hwaccel_args())
+        
+        # 输入文件
+        cmd.extend(['-i', str(input_path)])
+        
+        # 时间范围
+        cmd.extend([
+            '-ss', str(start_sec),
+            '-to', str(end_sec)
+        ])
+        
+        # 编码器参数
+        cmd.extend(self._get_encoder_args())
+        
+        # 音频处理
+        if remove_audio:
+            cmd.append('-an')
+        else:
+            cmd.extend(['-c:a', 'aac'])
+        
+        # 其他参数
+        cmd.extend([
+            '-avoid_negative_ts', 'make_zero',
+            str(output_path)
+        ])
+        
+        return cmd
+    
+    def _build_ffmpeg_slowdown_cmd(
+        self,
+        input_path: Path,
+        output_path: Path,
+        ratio: float
+    ) -> List[str]:
+        """
+        构建FFmpeg慢放命令
+        
+        Args:
+            input_path: 输入视频路径
+            output_path: 输出视频路径
+            ratio: 慢放比例
+            
+        Returns:
+            FFmpeg命令列表
+        """
+        cmd = ['ffmpeg', '-y']
+        
+        # 添加硬件加速参数（如果可用）
+        cmd.extend(self._get_hwaccel_args())
+        
+        # 输入文件
+        cmd.extend(['-i', str(input_path)])
+        
+        # 视频滤镜
+        if self._gpu_available:
+            # GPU模式：需要先下载到CPU，应用滤镜，再上传到GPU
+            cmd.extend([
+                '-vf', f'hwdownload,format=nv12,setpts={ratio}*PTS,hwupload'
+            ])
+        else:
+            # CPU模式
+            cmd.extend([
+                '-vf', f'setpts={ratio}*PTS'
+            ])
+        
+        # 移除音频
+        cmd.append('-an')
+        
+        # 编码器参数
+        cmd.extend(self._get_encoder_args())
+        
+        # 输出文件
+        cmd.append(str(output_path))
+        
+        return cmd
     
     def parse_srt(self, srt_path: Path) -> List[SubtitleEntry]:
         """
@@ -917,6 +1122,15 @@ class VideoTimelineSyncProcessor:
         print(f"更新SRT: {self.updated_srt_path}")
         print(f"输出目录: {self.output_dir}")
         print(f"包含间隔片段: {'是' if self.include_gaps else '否'}")
+        
+        # 显示GPU状态
+        if self.use_gpu:
+            if self._gpu_available:
+                print(f"🚀 GPU加速: 已启用 (设备ID: {self.gpu_id})")
+            else:
+                print(f"⚠️ GPU加速: 已请求但不可用，将使用CPU模式")
+        else:
+            print(f"💻 GPU加速: 未启用 (CPU模式)")
         
         try:
             # 步骤1：分析时间轴差异
