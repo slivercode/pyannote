@@ -453,8 +453,20 @@ class VideoTimelineSyncProcessor:
     
     def _get_video_duration(self) -> float:
         """
-        获取视频总时长（秒）
+        获取原始视频总时长（秒）
         
+        Returns:
+            视频时长（秒）
+        """
+        return self._get_video_duration_from_file(self.original_video_path)
+    
+    def _get_video_duration_from_file(self, video_path: Path) -> float:
+        """
+        获取指定视频文件的总时长（秒）
+        
+        Args:
+            video_path: 视频文件路径
+            
         Returns:
             视频时长（秒）
         """
@@ -463,7 +475,7 @@ class VideoTimelineSyncProcessor:
             '-v', 'error',
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
-            str(self.original_video_path)
+            str(video_path)
         ]
         
         try:
@@ -996,23 +1008,59 @@ class VideoTimelineSyncProcessor:
     
     def _cut_by_updated_srt(self, timeline_diffs: List[TimelineDiff]) -> List[Path]:
         """
-        直接按更新SRT切割原始视频（策略A）
+        直接按更新SRT切割原始视频（策略A）- 包含间隔片段
         
         Args:
             timeline_diffs: 时间轴差异列表
             
         Returns:
-            切割后的片段列表
+            切割后的片段列表（包含字幕片段和间隔片段）
         """
-        print("\n✂️  按更新SRT切割视频...")
+        print("\n✂️  按更新SRT切割视频（包含间隔）...")
         
         segments = []
+        segment_counter = 0
         
+        # 获取视频总时长
+        video_duration = self._get_video_duration()
+        
+        # 0. 切割第一个字幕之前的初始间隔（如果存在）
+        if len(timeline_diffs) > 0:
+            first_start = timeline_diffs[0].updated_entry.start_sec
+            if first_start > 0.1:
+                segment_counter += 1
+                initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
+                
+                print(f"切割开头间隔: 0.00s - {first_start:.2f}s")
+                
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(self.original_video_path),
+                    '-ss', '0',
+                    '-to', str(first_start),
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset,
+                    '-crf', '18',
+                    '-an',  # 移除音频
+                    '-avoid_negative_ts', 'make_zero',
+                    str(initial_gap_output)
+                ]
+                
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                    segments.append(initial_gap_output)
+                    print(f"  ✅ 开头间隔已添加")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ⚠️ 切割开头间隔失败: {e}")
+        
+        # 1. 切割字幕片段和中间间隔
         for i, diff in enumerate(timeline_diffs):
-            print(f"切割片段 {i+1}/{len(timeline_diffs)}: "
-                  f"{diff.updated_entry.start_sec:.2f}s - {diff.updated_entry.end_sec:.2f}s")
+            # 切割字幕片段
+            segment_counter += 1
+            subtitle_output = self.segments_dir / f"segment_{segment_counter:04d}_subtitle.mp4"
             
-            output_path = self.segments_dir / f"segment_{i+1:04d}.mp4"
+            print(f"切割字幕片段 {i+1}/{len(timeline_diffs)}: "
+                  f"{diff.updated_entry.start_sec:.2f}s - {diff.updated_entry.end_sec:.2f}s")
             
             cmd = [
                 'ffmpeg', '-y',
@@ -1022,19 +1070,81 @@ class VideoTimelineSyncProcessor:
                 '-c:v', 'libx264',
                 '-preset', self.quality_preset,
                 '-crf', '18',
-                '-c:a', 'aac',
+                '-an',  # 移除音频
                 '-avoid_negative_ts', 'make_zero',
-                str(output_path)
+                str(subtitle_output)
             ]
             
             try:
                 subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
-                segments.append(output_path)
+                segments.append(subtitle_output)
             except subprocess.CalledProcessError as e:
-                print(f"   ❌ 切割失败: {e}")
+                print(f"   ❌ 切割字幕片段失败: {e}")
                 raise
+            
+            # 切割间隔片段（如果存在下一个字幕）
+            if i < len(timeline_diffs) - 1:
+                gap_start = diff.updated_entry.end_sec
+                gap_end = timeline_diffs[i + 1].updated_entry.start_sec
+                gap_duration = gap_end - gap_start
+                
+                if gap_duration > 0.1:
+                    segment_counter += 1
+                    gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
+                    
+                    print(f"  切割间隔: {gap_start:.2f}s - {gap_end:.2f}s")
+                    
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-i', str(self.original_video_path),
+                        '-ss', str(gap_start),
+                        '-to', str(gap_end),
+                        '-c:v', 'libx264',
+                        '-preset', self.quality_preset,
+                        '-crf', '18',
+                        '-an',  # 移除音频
+                        '-avoid_negative_ts', 'make_zero',
+                        str(gap_output)
+                    ]
+                    
+                    try:
+                        subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                        segments.append(gap_output)
+                    except subprocess.CalledProcessError as e:
+                        print(f"   ⚠️ 切割间隔失败: {e}")
         
-        print(f"\n✅ 切割完成: {len(segments)} 个片段")
+        # 2. 切割尾部间隔（如果存在）
+        if len(timeline_diffs) > 0 and video_duration > 0:
+            last_end = timeline_diffs[-1].updated_entry.end_sec
+            tail_gap_duration = video_duration - last_end
+            
+            if tail_gap_duration > 0.1:
+                segment_counter += 1
+                tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
+                
+                print(f"切割尾部间隔: {last_end:.2f}s - {video_duration:.2f}s")
+                
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(self.original_video_path),
+                    '-ss', str(last_end),
+                    '-to', str(video_duration),
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset,
+                    '-crf', '18',
+                    '-an',  # 移除音频
+                    '-avoid_negative_ts', 'make_zero',
+                    str(tail_gap_output)
+                ]
+                
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                    segments.append(tail_gap_output)
+                    print(f"  ✅ 尾部间隔已添加")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ⚠️ 切割尾部间隔失败: {e}")
+        
+        print(f"\n✅ 切割完成: {len(segments)} 个片段（包含字幕和间隔）")
         return segments
     
     def _cut_slowed_video_by_updated_srt(
@@ -1043,24 +1153,60 @@ class VideoTimelineSyncProcessor:
         timeline_diffs: List[TimelineDiff]
     ) -> List[Path]:
         """
-        按更新SRT切割慢放后的视频（策略B）
+        按更新SRT切割慢放后的视频（策略B）- 包含间隔片段
         
         Args:
             slowed_video: 慢放后的视频路径
             timeline_diffs: 时间轴差异列表
             
         Returns:
-            切割后的片段列表
+            切割后的片段列表（包含字幕片段和间隔片段）
         """
-        print("\n✂️  按更新SRT切割慢放后的视频...")
+        print("\n✂️  按更新SRT切割慢放后的视频（包含间隔）...")
         
         segments = []
+        segment_counter = 0
         
+        # 获取慢放后视频的总时长
+        slowed_video_duration = self._get_video_duration_from_file(slowed_video)
+        
+        # 0. 切割第一个字幕之前的初始间隔（如果存在）
+        if len(timeline_diffs) > 0:
+            first_start = timeline_diffs[0].updated_entry.start_sec
+            if first_start > 0.1:
+                segment_counter += 1
+                initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
+                
+                print(f"切割开头间隔: 0.00s - {first_start:.2f}s")
+                
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(slowed_video),
+                    '-ss', '0',
+                    '-to', str(first_start),
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset,
+                    '-crf', '18',
+                    '-an',  # 移除音频
+                    '-avoid_negative_ts', 'make_zero',
+                    str(initial_gap_output)
+                ]
+                
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                    segments.append(initial_gap_output)
+                    print(f"  ✅ 开头间隔已添加")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ⚠️ 切割开头间隔失败: {e}")
+        
+        # 1. 切割字幕片段和中间间隔
         for i, diff in enumerate(timeline_diffs):
-            print(f"切割片段 {i+1}/{len(timeline_diffs)}: "
-                  f"{diff.updated_entry.start_sec:.2f}s - {diff.updated_entry.end_sec:.2f}s")
+            # 切割字幕片段
+            segment_counter += 1
+            subtitle_output = self.segments_dir / f"segment_{segment_counter:04d}_subtitle.mp4"
             
-            output_path = self.segments_dir / f"segment_{i+1:04d}.mp4"
+            print(f"切割字幕片段 {i+1}/{len(timeline_diffs)}: "
+                  f"{diff.updated_entry.start_sec:.2f}s - {diff.updated_entry.end_sec:.2f}s")
             
             cmd = [
                 'ffmpeg', '-y',
@@ -1070,19 +1216,81 @@ class VideoTimelineSyncProcessor:
                 '-c:v', 'libx264',
                 '-preset', self.quality_preset,
                 '-crf', '18',
-                '-c:a', 'aac',
+                '-an',  # 移除音频
                 '-avoid_negative_ts', 'make_zero',
-                str(output_path)
+                str(subtitle_output)
             ]
             
             try:
                 subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
-                segments.append(output_path)
+                segments.append(subtitle_output)
             except subprocess.CalledProcessError as e:
-                print(f"   ❌ 切割失败: {e}")
+                print(f"   ❌ 切割字幕片段失败: {e}")
                 raise
+            
+            # 切割间隔片段（如果存在下一个字幕）
+            if i < len(timeline_diffs) - 1:
+                gap_start = diff.updated_entry.end_sec
+                gap_end = timeline_diffs[i + 1].updated_entry.start_sec
+                gap_duration = gap_end - gap_start
+                
+                if gap_duration > 0.1:
+                    segment_counter += 1
+                    gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
+                    
+                    print(f"  切割间隔: {gap_start:.2f}s - {gap_end:.2f}s")
+                    
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-i', str(slowed_video),
+                        '-ss', str(gap_start),
+                        '-to', str(gap_end),
+                        '-c:v', 'libx264',
+                        '-preset', self.quality_preset,
+                        '-crf', '18',
+                        '-an',  # 移除音频
+                        '-avoid_negative_ts', 'make_zero',
+                        str(gap_output)
+                    ]
+                    
+                    try:
+                        subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                        segments.append(gap_output)
+                    except subprocess.CalledProcessError as e:
+                        print(f"   ⚠️ 切割间隔失败: {e}")
         
-        print(f"\n✅ 切割完成: {len(segments)} 个片段")
+        # 2. 切割尾部间隔（如果存在）
+        if len(timeline_diffs) > 0 and slowed_video_duration > 0:
+            last_end = timeline_diffs[-1].updated_entry.end_sec
+            tail_gap_duration = slowed_video_duration - last_end
+            
+            if tail_gap_duration > 0.1:
+                segment_counter += 1
+                tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
+                
+                print(f"切割尾部间隔: {last_end:.2f}s - {slowed_video_duration:.2f}s")
+                
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(slowed_video),
+                    '-ss', str(last_end),
+                    '-to', str(slowed_video_duration),
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset,
+                    '-crf', '18',
+                    '-an',  # 移除音频
+                    '-avoid_negative_ts', 'make_zero',
+                    str(tail_gap_output)
+                ]
+                
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
+                    segments.append(tail_gap_output)
+                    print(f"  ✅ 尾部间隔已添加")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ⚠️ 切割尾部间隔失败: {e}")
+        
+        print(f"\n✅ 切割完成: {len(segments)} 个片段（包含字幕和间隔）")
         return segments
 
 

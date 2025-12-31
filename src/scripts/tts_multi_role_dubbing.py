@@ -297,6 +297,13 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
         if total_subtitles == 0:
             raise ValueError("SRT文件中没有字幕")
         
+        # 1.5. 智能语速优化：如果启用保持总时长且使用默认语速，自动提升到1.2
+        original_speed_factor = self.speed_factor
+        if self.preserve_total_time and abs(self.speed_factor - 1.0) < 0.01:
+            self.speed_factor = 1.2
+            print(f"\n🚀 智能语速优化: {original_speed_factor} → {self.speed_factor} (保持总时长模式)")
+            print(f"   这将加快TTS生成速度，减少后期调整时间\n")
+        
         print(f"PROGRESS:10%")
         
         # 2. 验证角色配置
@@ -361,11 +368,15 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
             
             from timeline_adjuster import TimelineAdjuster
             
+            print(f"📊 TTS生成语速: {self.speed_factor}x")
+            
             # 使用TimelineAdjuster动态调整时间轴
             timeline_adjuster = TimelineAdjuster(
                 subtitles=subtitle_data,
                 audio_files=audio_files,
-                preserve_total_time=True
+                preserve_total_time=True,
+                target_speed_factor=self.speed_factor,
+                max_speed_limit=2.0
             )
             
             # 调整时间轴

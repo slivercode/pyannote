@@ -504,6 +504,13 @@ class TTSDubbingProcessor:
         if total_subtitles == 0:
             raise ValueError("SRT文件中没有字幕")
         
+        # 1.5. 智能语速优化：如果启用保持总时长且使用默认语速，自动提升到1.2
+        original_speed_factor = self.speed_factor
+        if self.preserve_total_time and abs(self.speed_factor - 1.0) < 0.01:
+            self.speed_factor = 1.2
+            print(f"\n🚀 智能语速优化: {original_speed_factor} → {self.speed_factor} (保持总时长模式)")
+            print(f"   这将加快TTS生成速度，减少后期调整时间\n")
+        
         # 2. 合成每条字幕的语音
         audio_files = []
         subtitle_data = []
@@ -562,7 +569,7 @@ class TTSDubbingProcessor:
                 print(f"📊 原始SRT总时长: {subtitle_data[-1]['end_ms']}ms")
                 print(f"📊 字幕数量: {len(subtitle_data)}")
                 print(f"📊 配音文件数量: {len(audio_files)}")
-                print(f"📊 语速系数: {self.speed_factor}")
+                print(f"📊 TTS生成语速: {self.speed_factor}x")
                 print("⏱️ "*30 + "\n")
                 
                 # 使用TimelineAdjuster动态调整时间轴（带语速限制）
