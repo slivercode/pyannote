@@ -81,7 +81,8 @@ class VideoTimelineSyncProcessor:
         include_gaps: bool = True,
         slowdown_start_index: int = 1,
         use_gpu: bool = False,
-        gpu_id: int = 0
+        gpu_id: int = 0,
+        use_dynamic_slowdown_limit: bool = True
     ):
         """
         初始化处理器
@@ -99,6 +100,9 @@ class VideoTimelineSyncProcessor:
             slowdown_start_index: 从第几句开始慢放（默认1，即从第一句开始）
             use_gpu: 是否使用GPU加速（默认False）
             gpu_id: GPU设备ID（默认0）
+            use_dynamic_slowdown_limit: 是否使用动态慢放限制（默认True）
+                - True: 根据片段时长动态调整最大慢放比例
+                - False: 使用固定的max_slowdown_ratio
         """
         self.original_video_path = Path(original_video_path)
         self.original_srt_path = Path(original_srt_path)
@@ -110,6 +114,7 @@ class VideoTimelineSyncProcessor:
         self.enable_frame_interpolation = enable_frame_interpolation
         self.include_gaps = include_gaps
         self.slowdown_start_index = slowdown_start_index
+        self.use_dynamic_slowdown_limit = use_dynamic_slowdown_limit
         
         # GPU加速配置
         self.use_gpu = use_gpu
@@ -165,6 +170,40 @@ class VideoTimelineSyncProcessor:
         except Exception as e:
             print(f"⚠️ GPU检测失败: {e}")
             return False
+    
+    def _get_max_slowdown_for_duration(self, duration_sec: float) -> float:
+        """
+        根据片段时长动态计算最大慢放比例
+        
+        原理：
+        - 极短片段（<0.5秒）：允许更高的慢放比例（视觉上不明显）
+        - 短片段（0.5-1.0秒）：允许中等慢放比例
+        - 中等片段（1.0-2.0秒）：使用标准限制
+        - 长片段（>2.0秒）：使用更严格的限制
+        
+        Args:
+            duration_sec: 片段时长（秒）
+            
+        Returns:
+            该片段的最大慢放比例
+        """
+        if not self.use_dynamic_slowdown_limit:
+            # 如果未启用动态限制，返回固定值
+            return self.max_slowdown_ratio
+        
+        if duration_sec < 0.5:
+            # 极短片段：允许最高6.0x慢放
+            # 原因：0.3秒的片段即使慢放到1.8秒，视觉上也不会太明显
+            return 6.0
+        elif duration_sec < 1.0:
+            # 短片段：允许最高3.0x慢放
+            return 3.0
+        elif duration_sec < 2.0:
+            # 中等片段：标准限制
+            return self.max_slowdown_ratio
+        else:
+            # 长片段：更严格的限制（避免明显的拉伸感）
+            return min(self.max_slowdown_ratio, 1.5)
     
     def _get_hwaccel_args(self) -> List[str]:
         """
@@ -1463,15 +1502,16 @@ class VideoTimelineSyncProcessor:
         timeline_diffs: List[TimelineDiff]
     ) -> List[Path]:
         """
-        按分段组切割和调整视频
+        按分段组切割和调整视频（支持累积时间轴调整）
         
         流程：
         1. 将时间轴差异分组
         2. 对每个组：
            - 切割整段视频（包含多条字幕）
            - 如果需要调整，对整段进行统一调整
-           - 如果不需要调整，直接保留
-        3. 处理间隔片段
+           - 如果不需要调整，也要根据累积时间差异进行调整
+        3. 处理间隔片段（根据累积时间差异动态调整）
+        4. **关键**：跟踪累积的时间差异，确保所有片段都保持正确的时间轴
         
         Args:
             timeline_diffs: 时间轴差异列表
@@ -1480,7 +1520,7 @@ class VideoTimelineSyncProcessor:
             处理后的片段列表
         """
         print("\n" + "="*60)
-        print("✂️  按分段组切割和调整视频")
+        print("✂️  按分段组切割和调整视频（动态累积时间轴调整）")
         print("="*60)
         
         # 步骤1：分组
@@ -1492,6 +1532,11 @@ class VideoTimelineSyncProcessor:
         
         # 获取视频总时长
         video_duration = self._get_video_duration()
+        
+        # **关键**：累积时间差异（秒）
+        # 正值表示实际输出比目标短（画面快于音声），需要延长后续片段
+        # 负值表示实际输出比目标长（画面慢于音声），需要缩短后续片段
+        cumulative_time_gap = 0.0
         
         # 处理开头间隔
         if len(groups) > 0:
@@ -1549,10 +1594,30 @@ class VideoTimelineSyncProcessor:
             try:
                 subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
                 
+                # 计算原始时长和目标时长
+                original_duration = group.original_end_sec - group.original_start_sec
+                target_duration = group.target_duration_sec
+                
                 # 判断是否需要调整
                 if group.needs_adjustment:
+                    # 使用动态慢放限制
+                    max_ratio_for_group = self._get_max_slowdown_for_duration(original_duration)
+                    
                     # 限制调整比例
-                    actual_ratio = min(group.avg_ratio, self.max_slowdown_ratio)
+                    actual_ratio = min(group.avg_ratio, max_ratio_for_group)
+                    
+                    # **关键**：计算实际输出时长和目标时长的差异
+                    actual_output_duration = original_duration * actual_ratio
+                    time_gap = target_duration - actual_output_duration
+                    
+                    # 累积时间差异
+                    cumulative_time_gap += time_gap
+                    
+                    # 如果实际比例被限制，显示警告
+                    if group.avg_ratio > max_ratio_for_group:
+                        print(f"  ⚠️ 需要 {group.avg_ratio:.2f}x，但限制为 {actual_ratio:.2f}x（原始时长{original_duration:.2f}s）")
+                        print(f"  ⚠️ 时间缺口: {time_gap:.2f}s（目标{target_duration:.2f}s - 实际{actual_output_duration:.2f}s）")
+                        print(f"  📊 累积时间缺口: {cumulative_time_gap:.2f}s")
                     
                     adjustment_type = "慢放" if actual_ratio > 1.0 else "加速"
                     print(f"  {adjustment_type}: {actual_ratio:.2f}x")
@@ -1564,7 +1629,7 @@ class VideoTimelineSyncProcessor:
                         group_output,
                         adjusted_output,
                         actual_ratio,
-                        group.target_duration_sec
+                        target_duration
                     )
                     
                     if success:
@@ -1574,8 +1639,44 @@ class VideoTimelineSyncProcessor:
                         print(f"  ⚠️ 调整失败，使用原始片段")
                         processed_segments.append(group_output)
                 else:
-                    print(f"  保持原样（差异<{self.ratio_threshold*100:.0f}%）")
-                    processed_segments.append(group_output)
+                    # **关键改进**：即使不需要调整，也要根据累积时间差异进行微调
+                    # 计算这个片段应该的时长（考虑累积差异）
+                    time_gap = target_duration - original_duration
+                    cumulative_time_gap += time_gap
+                    
+                    # 如果累积差异较大（>0.1秒），对这个片段进行微调
+                    if abs(cumulative_time_gap) > 0.1:
+                        # 计算需要的调整比例
+                        # 目标：让这个片段的输出时长 = 原始时长 + 累积差异
+                        adjusted_target_duration = original_duration + cumulative_time_gap
+                        micro_ratio = adjusted_target_duration / original_duration if original_duration > 0 else 1.0
+                        
+                        # 限制微调比例在合理范围内（0.8x - 1.2x）
+                        micro_ratio = max(0.8, min(1.2, micro_ratio))
+                        
+                        print(f"  微调: {micro_ratio:.3f}x（补偿累积差异{cumulative_time_gap:.2f}s）")
+                        
+                        # 微调整段
+                        adjusted_output = self.slowed_dir / f"micro_adjusted_group_{i+1:04d}.mp4"
+                        
+                        success = self.slowdown_video_segment(
+                            group_output,
+                            adjusted_output,
+                            micro_ratio,
+                            adjusted_target_duration
+                        )
+                        
+                        if success:
+                            processed_segments.append(adjusted_output)
+                            # 重置累积差异（已通过微调补偿）
+                            cumulative_time_gap = 0.0
+                            print(f"  ✅ 微调完成，累积差异已补偿")
+                        else:
+                            print(f"  ⚠️ 微调失败，使用原始片段")
+                            processed_segments.append(group_output)
+                    else:
+                        print(f"  保持原样（差异<{self.ratio_threshold*100:.0f}%，累积差异{cumulative_time_gap:.2f}s）")
+                        processed_segments.append(group_output)
                 
             except subprocess.CalledProcessError as e:
                 print(f"  ❌ 切割失败: {e}")
@@ -1591,13 +1692,34 @@ class VideoTimelineSyncProcessor:
                     segment_counter += 1
                     gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
                     
-                    print(f"  切割间隔: {gap_start:.2f}s - {gap_end:.2f}s")
+                    # **关键改进**：动态调整间隔时长以补偿累积的时间缺口
+                    # 如果累积差异为正（画面快于音声），延长间隔
+                    # 如果累积差异为负（画面慢于音声），缩短间隔
+                    adjusted_gap_duration = gap_duration + cumulative_time_gap
+                    
+                    if adjusted_gap_duration < 0.05:
+                        # 如果调整后的间隔太短或为负，跳过这个间隔
+                        print(f"\n  ⚠️ 跳过间隔（调整后时长{adjusted_gap_duration:.2f}s < 0.05s）")
+                        print(f"     原始间隔: {gap_start:.2f}s - {gap_end:.2f}s ({gap_duration:.2f}s)")
+                        print(f"     累积缺口: {cumulative_time_gap:.2f}s")
+                        # 重置累积缺口（已经通过跳过间隔来补偿）
+                        cumulative_time_gap = 0.0
+                        continue
+                    
+                    # 调整间隔的结束时间
+                    adjusted_gap_end = gap_start + adjusted_gap_duration
+                    
+                    if abs(cumulative_time_gap) > 0.05:
+                        print(f"\n  切割间隔: {gap_start:.2f}s - {adjusted_gap_end:.2f}s")
+                        print(f"     原始间隔: {gap_duration:.2f}s → 调整后: {adjusted_gap_duration:.2f}s（补偿{cumulative_time_gap:+.2f}s）")
+                    else:
+                        print(f"\n  切割间隔: {gap_start:.2f}s - {gap_end:.2f}s")
                     
                     cmd = [
                         'ffmpeg', '-y',
                         '-i', str(self.original_video_path),
                         '-ss', str(gap_start),
-                        '-to', str(gap_end),
+                        '-to', str(min(adjusted_gap_end, video_duration)),  # 确保不超过视频总时长
                         '-c:v', 'libx264',
                         '-preset', self.quality_preset,
                         '-crf', '18',
@@ -1609,6 +1731,9 @@ class VideoTimelineSyncProcessor:
                     try:
                         subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
                         processed_segments.append(gap_output)
+                        # 重置累积缺口（已经通过调整间隔来补偿）
+                        cumulative_time_gap = 0.0
+                        print(f"     ✅ 累积差异已补偿")
                     except subprocess.CalledProcessError as e:
                         print(f"  ⚠️ 切割间隔失败: {e}")
         
@@ -1617,17 +1742,26 @@ class VideoTimelineSyncProcessor:
             last_end = groups[-1].original_end_sec
             tail_gap_duration = video_duration - last_end
             
-            if tail_gap_duration > 0.1:
+            # **关键改进**：调整尾部间隔以补偿剩余的累积时间缺口
+            adjusted_tail_gap_duration = tail_gap_duration + cumulative_time_gap
+            
+            if adjusted_tail_gap_duration > 0.1:
                 segment_counter += 1
                 tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
                 
-                print(f"\n切割尾部间隔: {last_end:.2f}s - {video_duration:.2f}s")
+                adjusted_tail_end = last_end + adjusted_tail_gap_duration
+                
+                if abs(cumulative_time_gap) > 0.05:
+                    print(f"\n切割尾部间隔: {last_end:.2f}s - {min(adjusted_tail_end, video_duration):.2f}s")
+                    print(f"   原始间隔: {tail_gap_duration:.2f}s → 调整后: {adjusted_tail_gap_duration:.2f}s（补偿{cumulative_time_gap:+.2f}s）")
+                else:
+                    print(f"\n切割尾部间隔: {last_end:.2f}s - {video_duration:.2f}s")
                 
                 cmd = [
                     'ffmpeg', '-y',
                     '-i', str(self.original_video_path),
                     '-ss', str(last_end),
-                    '-to', str(video_duration),
+                    '-to', str(min(adjusted_tail_end, video_duration)),
                     '-c:v', 'libx264',
                     '-preset', self.quality_preset,
                     '-crf', '18',
@@ -1639,9 +1773,30 @@ class VideoTimelineSyncProcessor:
                 try:
                     subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', check=True)
                     processed_segments.append(tail_gap_output)
-                    print(f"  ✅ 尾部间隔已添加")
+                    if abs(cumulative_time_gap) > 0.05:
+                        print(f"  ✅ 尾部间隔已添加，累积差异已补偿")
+                    else:
+                        print(f"  ✅ 尾部间隔已添加")
+                    cumulative_time_gap = 0.0
                 except subprocess.CalledProcessError as e:
                     print(f"  ⚠️ 切割尾部间隔失败: {e}")
+            elif cumulative_time_gap > 0.1:
+                print(f"\n⚠️ 警告：仍有{cumulative_time_gap:.2f}s的累积时间缺口未补偿")
+                print(f"   原因：尾部间隔太短（{tail_gap_duration:.2f}s）无法补偿")
+                print(f"   建议：检查原始视频时长或字幕时间轴")
+            elif cumulative_time_gap < -0.1:
+                print(f"\n⚠️ 警告：画面比音声慢{abs(cumulative_time_gap):.2f}s")
+                print(f"   建议：检查慢放比例设置")
+        
+        # 最终检查
+        if abs(cumulative_time_gap) > 0.05:
+            print(f"\n⚠️ 最终累积差异: {cumulative_time_gap:+.2f}s")
+            if cumulative_time_gap > 0:
+                print(f"   画面比音声快{cumulative_time_gap:.2f}s")
+            else:
+                print(f"   画面比音声慢{abs(cumulative_time_gap):.2f}s")
+        else:
+            print(f"\n✅ 时间轴同步完成，累积差异: {cumulative_time_gap:+.3f}s")
         
         print(f"\n✅ 处理完成: {len(processed_segments)} 个片段")
         
