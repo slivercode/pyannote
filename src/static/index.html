@@ -77,7 +77,7 @@
           :class="{ 'text-primary border-b-2 border-primary': activeTab === 'video-merger' }"
           @click="activeTab = 'video-merger'"
         >
-          <i class="fas fa-video mr-1"></i>视频合并
+          <i class="fas fa-video mr-1"></i>视频字幕烧录
         </div>
         <div
           class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
@@ -1391,12 +1391,12 @@
         </div>
       </div>
 
-      <!-- 视频合并模块 -->
+      <!-- 视频字幕烧录模块 -->
       <div v-if="activeTab === 'video-merger'">
         <h2 class="text-center text-primary mb-5 text-2xl font-semibold">
-          <i class="fas fa-video mr-2"></i>视频合并工具
+          <i class="fas fa-video mr-2"></i>视频字幕烧录工具
         </h2>
-        <p class="text-center text-gray-400 mb-8">将MP4视频、TTS音轨和字幕智能合并</p>
+        <p class="text-center text-gray-400 mb-8">将SRT字幕烧录到MP4视频中，生成带硬字幕的视频文件</p>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <!-- 左侧：文件上传和配置 -->
@@ -1429,34 +1429,10 @@
               </div>
             </div>
 
-            <!-- 音频文件上传 -->
-            <div class="mb-4">
-              <label class="block text-sm font-medium mb-2">
-                <i class="fas fa-music mr-1"></i>WAV/MP3音频文件
-              </label>
-              <input
-                type="file"
-                accept=".wav,.mp3"
-                @change="handleAudioUpload"
-                class="w-full bg-dark text-white px-4 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-primary file:text-white file:cursor-pointer hover:file:bg-purple-600"
-              />
-              <div v-if="videoMerger.audioFile" class="mt-2 bg-dark p-3 rounded border border-gray-700">
-                <div class="flex items-center justify-between">
-                  <span class="text-sm text-gray-400">
-                    <i class="fas fa-check-circle text-green-400 mr-1"></i>
-                    已选择: {{ videoMerger.audioFile.name }}
-                  </span>
-                  <span class="text-xs text-gray-500">
-                    {{ (videoMerger.audioFile.size / 1024 / 1024).toFixed(2) }} MB
-                  </span>
-                </div>
-              </div>
-            </div>
-
             <!-- 字幕文件上传 -->
             <div class="mb-4">
               <label class="block text-sm font-medium mb-2">
-                <i class="fas fa-file-alt mr-1"></i>SRT字幕文件
+                <i class="fas fa-file-alt mr-1"></i>SRT字幕文件 *
               </label>
               <input
                 type="file"
@@ -1477,104 +1453,165 @@
               </div>
             </div>
 
-            <!-- 合并模式选择 -->
-            <div class="mb-4">
-              <label class="block text-sm font-medium mb-3">
-                <i class="fas fa-cog mr-1"></i>合并模式
-              </label>
-              <div class="grid grid-cols-1 gap-3">
-                <label class="flex items-center p-3 border border-gray-600 rounded cursor-pointer hover:border-primary transition-colors" :class="{ 'border-primary bg-primary bg-opacity-10': videoMerger.mode === 'replace_audio' }">
-                  <input type="radio" v-model="videoMerger.mode" value="replace_audio" class="mr-3">
-                  <div class="flex-1">
-                    <div class="font-medium text-white">🔄 替换音轨 + 烧录字幕（推荐）</div>
-                    <div class="text-xs text-gray-400">用TTS音轨替换原音轨，如果上传字幕会自动烧录到画面</div>
-                    <div class="text-xs text-primary mt-1">
-                      <i class="fas fa-check-circle mr-1"></i>支持音视频自动同步
-                    </div>
-                  </div>
+            <!-- 字体设置 -->
+            <div class="mb-4 bg-dark p-4 rounded border border-gray-700">
+              <h4 class="text-lg font-semibold mb-3 text-white">
+                <i class="fas fa-font mr-2 text-primary"></i>字体设置
+              </h4>
+              
+              <!-- 字体大小 -->
+              <div class="mb-3">
+                <label class="block text-sm font-medium mb-2">
+                  <i class="fas fa-text-height mr-1"></i>字体大小
                 </label>
-                
-                <label class="flex items-center p-3 border border-gray-600 rounded cursor-pointer hover:border-primary transition-colors" :class="{ 'border-primary bg-primary bg-opacity-10': videoMerger.mode === 'mix_audio' }">
-                  <input type="radio" v-model="videoMerger.mode" value="mix_audio" class="mr-3">
-                  <div class="flex-1">
-                    <div class="font-medium text-white">🎵 混合音轨</div>
-                    <div class="text-xs text-gray-400">保留原音并混合TTS配音</div>
-                  </div>
+                <div class="flex items-center space-x-3">
+                  <input
+                    type="range"
+                    v-model="videoMerger.subtitleFontSize"
+                    min="12"
+                    max="72"
+                    step="2"
+                    class="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <span class="text-white font-medium w-12 text-center">{{ videoMerger.subtitleFontSize }}</span>
+                </div>
+              </div>
+
+              <!-- 字体名称 -->
+              <div class="mb-3">
+                <label class="block text-sm font-medium mb-2">
+                  <i class="fas fa-font mr-1"></i>字体名称
                 </label>
-                
-                <label class="flex items-center p-3 border border-gray-600 rounded cursor-pointer hover:border-primary transition-colors" :class="{ 'border-primary bg-primary bg-opacity-10': videoMerger.mode === 'embed_subtitle' }">
-                  <input type="radio" v-model="videoMerger.mode" value="embed_subtitle" class="mr-3">
-                  <div class="flex-1">
-                    <div class="font-medium text-white">📝 嵌入字幕（软字幕）</div>
-                    <div class="text-xs text-gray-400">将字幕作为软字幕嵌入，播放器可开关</div>
-                  </div>
+                <select
+                  v-model="videoMerger.subtitleFontName"
+                  class="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                >
+                  <option value="Arial">Arial</option>
+                  <option value="Microsoft YaHei">微软雅黑</option>
+                  <option value="SimHei">黑体</option>
+                  <option value="SimSun">宋体</option>
+                  <option value="Times New Roman">Times New Roman</option>
+                  <option value="Helvetica">Helvetica</option>
+                  <option value="Verdana">Verdana</option>
+                  <option value="Tahoma">Tahoma</option>
+                </select>
+              </div>
+
+              <!-- 字体颜色 -->
+              <div class="mb-3">
+                <label class="block text-sm font-medium mb-2">
+                  <i class="fas fa-palette mr-1"></i>字体颜色
                 </label>
-                
-                <label class="flex items-center p-3 border border-gray-600 rounded cursor-pointer hover:border-primary transition-colors" :class="{ 'border-primary bg-primary bg-opacity-10': videoMerger.mode === 'remove_audio' }">
-                  <input type="radio" v-model="videoMerger.mode" value="remove_audio" class="mr-3">
-                  <div class="flex-1">
-                    <div class="font-medium text-white">🔇 去除音轨</div>
-                    <div class="text-xs text-gray-400">仅移除原视频音轨</div>
-                  </div>
-                </label>
-                
-                <label class="flex items-center p-3 border border-gray-600 rounded cursor-pointer hover:border-primary transition-colors" :class="{ 'border-primary bg-primary bg-opacity-10': videoMerger.mode === 'video_only' }">
-                  <input type="radio" v-model="videoMerger.mode" value="video_only" class="mr-3">
-                  <div class="flex-1">
-                    <div class="font-medium text-white">📹 仅视频</div>
-                    <div class="text-xs text-gray-400">提取纯视频流</div>
-                  </div>
-                </label>
-                
-                <label class="flex items-center p-3 border border-green-600 rounded cursor-pointer hover:border-green-400 transition-colors" :class="{ 'border-green-400 bg-green-600 bg-opacity-10': videoMerger.mode === 'simple_merge' }">
-                  <input type="radio" v-model="videoMerger.mode" value="simple_merge" class="mr-3">
-                  <div class="flex-1">
-                    <div class="font-medium text-white">⚡ 简单合并（视频+音频）</div>
-                    <div class="text-xs text-gray-400">只合并视频和音频，不涉及字幕</div>
-                    <div class="text-xs text-green-400 mt-1">
-                      <i class="fas fa-bolt mr-1"></i>快速、简单、支持自动慢放
-                    </div>
-                  </div>
-                </label>
+                <div class="grid grid-cols-4 gap-2">
+                  <label v-for="(colorName, colorValue) in availableColors" :key="colorValue" 
+                         class="flex items-center p-2 border border-gray-600 rounded cursor-pointer hover:border-primary transition-colors"
+                         :class="{ 'border-primary bg-primary bg-opacity-10': videoMerger.subtitleColor === colorValue }">
+                    <input type="radio" v-model="videoMerger.subtitleColor" :value="colorValue" class="sr-only">
+                    <div class="w-4 h-4 rounded mr-2" :style="{ backgroundColor: getColorHex(colorValue) }"></div>
+                    <span class="text-xs text-white">{{ colorName }}</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- 描边设置 -->
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium mb-2">
+                    <i class="fas fa-border-style mr-1"></i>描边颜色
+                  </label>
+                  <select
+                    v-model="videoMerger.subtitleOutlineColor"
+                    class="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                  >
+                    <option value="black">黑色</option>
+                    <option value="white">白色</option>
+                    <option value="gray">灰色</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium mb-2">
+                    <i class="fas fa-border-all mr-1"></i>描边宽度
+                  </label>
+                  <select
+                    v-model="videoMerger.subtitleOutlineWidth"
+                    class="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                  >
+                    <option :value="0">无描边</option>
+                    <option :value="1">细 (1px)</option>
+                    <option :value="2">中 (2px)</option>
+                    <option :value="3">粗 (3px)</option>
+                    <option :value="4">很粗 (4px)</option>
+                  </select>
+                </div>
               </div>
             </div>
 
             <!-- 高级选项 -->
-            <div class="mb-4 bg-dark p-3 rounded border border-gray-700">
-              <label class="flex items-center cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  v-model="videoMerger.removeOriginalAudio"
-                  class="mr-2"
-                  :disabled="videoMerger.mode === 'mix_audio'"
-                >
-                <span class="text-sm text-gray-300">
-                  <i class="fas fa-volume-mute mr-1"></i>
-                  去除原始音轨（推荐）
-                </span>
-              </label>
-              <p class="text-xs text-gray-500 ml-6 mt-1">
-                <i class="fas fa-info-circle mr-1"></i>
-                混合音轨模式下此选项自动禁用
-              </p>
+            <div class="mb-4 bg-dark p-4 rounded border border-gray-700">
+              <h4 class="text-lg font-semibold mb-3 text-white">
+                <i class="fas fa-cogs mr-2 text-primary"></i>高级选项
+              </h4>
+              
+              <!-- 说话人标识清理 -->
+              <div class="mb-3">
+                <label class="flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    v-model="videoMerger.cleanSpeakers"
+                    class="mr-2"
+                  />
+                  <span class="text-sm text-gray-300">
+                    <i class="fas fa-broom mr-1"></i>
+                    自动清理说话人标识
+                  </span>
+                </label>
+                <p class="text-xs text-gray-500 ml-6 mt-1">
+                  <i class="fas fa-info-circle mr-1"></i>
+                  自动去除字幕中的 [spk01]:、[spk00]: 等说话人标识
+                </p>
+              </div>
             </div>
 
-            <!-- 开始合并按钮 -->
+            <!-- 开始烧录按钮 -->
             <button
-              @click="startVideoMerge"
-              :disabled="!canStartVideoMerge()"
+              @click="startSubtitleBurn"
+              :disabled="!canStartSubtitleBurn()"
               class="w-full bg-primary hover:bg-purple-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 rounded transition"
             >
-              <i class="fas fa-play mr-2"></i>
-              {{ videoMerger.task?.status === 'running' ? '合并中...' : '开始合并' }}
+              <i class="fas fa-fire mr-2"></i>
+              {{ videoMerger.task?.status === 'running' ? '烧录中...' : '开始烧录字幕' }}
             </button>
           </div>
 
           <!-- 右侧：进度和结果 -->
           <div class="bg-darker p-5 rounded-lg">
             <h3 class="text-xl font-semibold mb-4 text-white border-b border-gray-700 pb-2">
-              <i class="fas fa-tasks mr-2 text-primary"></i>合并进度
+              <i class="fas fa-tasks mr-2 text-primary"></i>烧录进度
             </h3>
+
+            <!-- 字体预览 -->
+            <div v-if="videoMerger.videoFile && videoMerger.subtitleFile" class="mb-4 bg-dark p-4 rounded border border-gray-700">
+              <h4 class="text-sm font-medium mb-2 text-gray-400">
+                <i class="fas fa-eye mr-1"></i>字体预览
+              </h4>
+              <div class="bg-gray-800 p-3 rounded text-center relative">
+                <div 
+                  class="inline-block relative"
+                  :style="{ 
+                    fontSize: videoMerger.subtitleFontSize + 'px',
+                    fontFamily: videoMerger.subtitleFontName,
+                    color: getColorHex(videoMerger.subtitleColor),
+                    textShadow: videoMerger.subtitleOutlineWidth > 0 ? 
+                      `${videoMerger.subtitleOutlineWidth}px ${videoMerger.subtitleOutlineWidth}px 0 ${getColorHex(videoMerger.subtitleOutlineColor)}, 
+                       -${videoMerger.subtitleOutlineWidth}px -${videoMerger.subtitleOutlineWidth}px 0 ${getColorHex(videoMerger.subtitleOutlineColor)}, 
+                       ${videoMerger.subtitleOutlineWidth}px -${videoMerger.subtitleOutlineWidth}px 0 ${getColorHex(videoMerger.subtitleOutlineColor)}, 
+                       -${videoMerger.subtitleOutlineWidth}px ${videoMerger.subtitleOutlineWidth}px 0 ${getColorHex(videoMerger.subtitleOutlineColor)}` : 'none'
+                  }"
+                >
+                  示例字幕文本
+                </div>
+              </div>
+            </div>
 
             <!-- 任务进度 -->
             <div v-if="videoMerger.task" class="mb-4">
@@ -1612,10 +1649,10 @@
               </div>
             </div>
 
-            <!-- 合并结果 -->
+            <!-- 烧录结果 -->
             <div v-if="videoMerger.task?.status === 'completed' && videoMerger.resultVideo" class="mt-4">
               <h4 class="text-lg font-semibold mb-3 text-green-400">
-                <i class="fas fa-check-circle mr-2"></i>合并完成
+                <i class="fas fa-check-circle mr-2"></i>烧录完成
               </h4>
 
               <!-- 视频预览 -->
@@ -1653,13 +1690,19 @@
                 <p v-if="videoMerger.task.processing_time" class="text-xs text-gray-500 mt-1">
                   <i class="fas fa-clock mr-1"></i>处理时间: {{ videoMerger.task.processing_time }}
                 </p>
+                <div v-if="videoMerger.task.font_settings" class="text-xs text-gray-500 mt-1">
+                  <i class="fas fa-font mr-1"></i>字体设置: 
+                  {{ videoMerger.task.font_settings.font_name }} 
+                  {{ videoMerger.task.font_settings.font_size }}px 
+                  {{ videoMerger.task.font_settings.color }}
+                </div>
               </div>
             </div>
 
             <!-- 空状态 -->
             <div v-if="!videoMerger.task" class="text-center py-12 text-gray-500">
               <i class="fas fa-info-circle text-4xl mb-3"></i>
-              <p>选择文件并配置合并模式后开始合并</p>
+              <p>选择视频和字幕文件，配置字体样式后开始烧录</p>
             </div>
           </div>
         </div>
@@ -2383,36 +2426,41 @@
           });
           const multiRoleDubbingPollTimer = ref(null);
 
-          // ==================== 视频合并功能 ====================
+          // ==================== 视频字幕烧录功能 ====================
           
-          // 视频合并状态
+          // 视频字幕烧录状态
           const videoMerger = ref({
             videoFile: null,
-            audioFile: null,
             subtitleFile: null,
-            mode: 'replace_audio',
-            removeOriginalAudio: true,
+            subtitleFontSize: 24,
+            subtitleFontName: 'Arial',
+            subtitleColor: 'white',
+            subtitleOutlineColor: 'black',
+            subtitleOutlineWidth: 2,
+            cleanSpeakers: true,  // 默认启用说话人标识清理
             task: null,
             resultVideo: null,
             resultPath: null
           });
 
-          // 视频合并轮询定时器
+          // 可用颜色
+          const availableColors = {
+            'white': '白色',
+            'yellow': '黄色',
+            'red': '红色',
+            'green': '绿色',
+            'blue': '蓝色',
+            'cyan': '青色',
+            'magenta': '洋红',
+            'gray': '灰色'
+          };
+
+          // 视频烧录轮询定时器
           const videoMergePollTimer = ref(null);
 
           // 组件挂载时初始化
           onMounted(() => {
             loadTtsConfig();
-          });
-
-          // 监听视频合并模式变化
-          watch(() => videoMerger.value.mode, (newMode) => {
-            // 混合音轨模式不能去除原音轨
-            if (newMode === 'mix_audio') {
-              videoMerger.value.removeOriginalAudio = false;
-            } else if (newMode !== 'mix_audio' && !videoMerger.value.removeOriginalAudio) {
-              videoMerger.value.removeOriginalAudio = true;
-            }
           });
 
           // 组件卸载时清理
@@ -3372,21 +3420,13 @@
             }
           };
 
-          // ==================== 视频合并功能方法 ====================
+          // ==================== 视频字幕烧录功能方法 ====================
           
           // 处理视频文件上传
           const handleVideoUpload = (event) => {
             const file = event.target.files[0];
             if (file) {
               videoMerger.value.videoFile = file;
-            }
-          };
-
-          // 处理音频文件上传
-          const handleAudioUpload = (event) => {
-            const file = event.target.files[0];
-            if (file) {
-              videoMerger.value.audioFile = file;
             }
           };
 
@@ -3398,121 +3438,96 @@
             }
           };
 
-          // 检查是否可以开始视频合并
-          const canStartVideoMerge = () => {
+          // 检查是否可以开始字幕烧录
+          const canStartSubtitleBurn = () => {
             if (!videoMerger.value.videoFile) return false;
+            if (!videoMerger.value.subtitleFile) return false;
             if (videoMerger.value.task?.status === 'running') return false;
-            
-            // 根据模式检查必需文件
-            const mode = videoMerger.value.mode;
-            
-            // 简单合并模式：必须有视频和音频
-            if (mode === 'simple_merge') {
-              return videoMerger.value.videoFile && videoMerger.value.audioFile;
-            }
-            
-            // 替换音轨模式：必须有音频文件，字幕可选（如果有字幕会自动烧录）
-            if (mode === 'replace_audio' && !videoMerger.value.audioFile) {
-              return false;
-            }
-            
-            // 混合音轨模式：必须有音频文件
-            if (mode === 'mix_audio' && !videoMerger.value.audioFile) {
-              return false;
-            }
-            
-            // 嵌入字幕模式：必须有字幕文件
-            if (mode === 'embed_subtitle' && !videoMerger.value.subtitleFile) {
-              return false;
-            }
-            
             return true;
+          };
+
+          // 获取颜色的十六进制值
+          const getColorHex = (colorName) => {
+            const colorMap = {
+              'white': '#FFFFFF',
+              'black': '#000000',
+              'red': '#FF0000',
+              'green': '#00FF00',
+              'blue': '#0000FF',
+              'yellow': '#FFFF00',
+              'cyan': '#00FFFF',
+              'magenta': '#FF00FF',
+              'gray': '#808080'
+            };
+            return colorMap[colorName] || '#FFFFFF';
           };
 
           // 格式化视频合并状态
           const formatVideoMergeStatus = (status) => {
             const map = {
-              running: '合并中',
+              running: '烧录中',
               completed: '已完成',
               failed: '失败'
             };
             return map[status] || status;
           };
 
-          // 开始视频合并
-          const startVideoMerge = async () => {
-            if (!canStartVideoMerge()) {
-              alert('请完成所有必需的配置');
+          // 开始字幕烧录
+          const startSubtitleBurn = async () => {
+            if (!canStartSubtitleBurn()) {
+              alert('请选择视频文件和字幕文件');
               return;
             }
 
             try {
-              console.log('🎬 开始视频合并...');
+              console.log('🎬 开始字幕烧录...');
+              console.log('🧹 清理说话人标识设置:', videoMerger.value.cleanSpeakers);
               
-              // 准备FormData
               const formData = new FormData();
               formData.append('video', videoMerger.value.videoFile);
-              
-              // 判断是否使用简单合并模式
-              const isSimpleMode = videoMerger.value.mode === 'simple_merge';
-              
-              if (isSimpleMode) {
-                // 简单合并模式：只需要视频和音频
-                if (!videoMerger.value.audioFile) {
-                  alert('简单合并模式需要上传音频文件');
-                  return;
-                }
-                formData.append('audio', videoMerger.value.audioFile);
-                formData.append('mode', 'replace');  // 默认替换音轨
-                formData.append('enable_slowdown', true);  // 启用自动慢放
-                
-                // 使用简单合并API
-                const res = await axios.post('/api/video-merger/merge-simple', formData, {
-                  headers: { 'Content-Type': 'multipart/form-data' }
-                });
-                
-                // 保存任务信息
-                videoMerger.value.task = res.data;
-                videoMerger.value.resultVideo = null;
-                videoMerger.value.resultPath = null;
-                
-                // 启动轮询
-                startVideoMergePolling(res.data.task_id);
+              formData.append('subtitle', videoMerger.value.subtitleFile);
+              formData.append('subtitle_font_size', videoMerger.value.subtitleFontSize);
+              formData.append('subtitle_font_name', videoMerger.value.subtitleFontName);
+              formData.append('subtitle_color', videoMerger.value.subtitleColor);
+              formData.append('subtitle_outline_color', videoMerger.value.subtitleOutlineColor);
+              formData.append('subtitle_outline_width', videoMerger.value.subtitleOutlineWidth);
+
+              // 根据是否启用说话人标识清理选择不同的API端点
+              let apiEndpoint = '/api/video-merger/burn-subtitle';
+              if (videoMerger.value.cleanSpeakers) {
+                apiEndpoint = '/api/video-merger/burn-subtitle-clean';
+                formData.append('clean_speakers', videoMerger.value.cleanSpeakers);
+                console.log('✅ 使用清理端点:', apiEndpoint);
               } else {
-                // 标准合并模式
-                if (videoMerger.value.audioFile) {
-                  formData.append('audio', videoMerger.value.audioFile);
-                }
-                
-                if (videoMerger.value.subtitleFile) {
-                  formData.append('subtitle', videoMerger.value.subtitleFile);
-                }
-                
-                formData.append('mode', videoMerger.value.mode);
-                formData.append('remove_original_audio', videoMerger.value.removeOriginalAudio);
-
-                // 发送请求
-                const res = await axios.post('/api/video-merger/merge', formData, {
-                  headers: { 'Content-Type': 'multipart/form-data' }
-                });
-
-                // 保存任务信息
-                videoMerger.value.task = res.data;
-                videoMerger.value.resultVideo = null;
-                videoMerger.value.resultPath = null;
-
-                // 启动轮询
-                startVideoMergePolling(res.data.task_id);
+                console.log('⚠️ 使用标准端点:', apiEndpoint);
               }
-              
-            } catch (err) {
-              console.error('启动视频合并失败:', err);
-              alert(`启动视频合并失败：${err.response?.data?.detail || err.message}`);
+
+              console.log('📡 发送请求到:', apiEndpoint);
+
+              const res = await axios.post(apiEndpoint, formData, {
+                headers: {
+                  'Content-Type': 'multipart/form-data'
+                }
+              });
+
+              console.log('✅ 任务已启动:', res.data);
+
+              // 保存任务信息
+              videoMerger.value.task = res.data;
+              videoMerger.value.resultVideo = null;
+              videoMerger.value.resultPath = null;
+
+              // 启动轮询
+              startSubtitleBurnPolling(res.data.task_id);
+
+            } catch (error) {
+              console.error('❌ 启动字幕烧录失败:', error);
+              alert('启动字幕烧录失败: ' + (error.response?.data?.detail || error.message));
             }
           };
 
-          // 启动视频合并任务轮询
-          const startVideoMergePolling = (taskId) => {
+          // 启动字幕烧录任务轮询
+          const startSubtitleBurnPolling = (taskId) => {
             if (videoMergePollTimer.value) clearInterval(videoMergePollTimer.value);
 
             videoMergePollTimer.value = setInterval(async () => {
@@ -3526,17 +3541,14 @@
                   videoMerger.value.resultVideo = `/output/${res.data.filename}?v=${Date.now()}`;
                   clearInterval(videoMergePollTimer.value);
                   videoMergePollTimer.value = null;
-                }
-
-                // 任务失败时停止轮询
-                if (res.data.status === 'failed') {
+                } else if (res.data.status === 'failed') {
                   clearInterval(videoMergePollTimer.value);
                   videoMergePollTimer.value = null;
                 }
-              } catch (err) {
+              } catch (error) {
+                console.error('获取任务状态失败:', error);
                 clearInterval(videoMergePollTimer.value);
                 videoMergePollTimer.value = null;
-                console.error('获取视频合并进度失败:', err);
               }
             }, 2000);
           };
@@ -3821,14 +3833,15 @@
             canStartMultiRoleDubbing,
             startMultiRoleDubbing,
             openMultiRoleDubbingFolder,
-            // 视频合并
+            // 视频字幕烧录
             videoMerger,
+            availableColors,
             handleVideoUpload,
-            handleAudioUpload,
             handleSubtitleUpload,
-            canStartVideoMerge,
+            canStartSubtitleBurn,
+            getColorHex,
             formatVideoMergeStatus,
-            startVideoMerge,
+            startSubtitleBurn,
             openVideoMergeFolder,
             // 视频时间轴同步
             videoSync,
