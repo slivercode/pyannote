@@ -200,9 +200,9 @@ async def start_video_sync(request: VideoSyncRequest):
                     gpu_id=request.gpu_id
                 )
                 
-                # 创建优化处理器
+                # 创建优化处理器（自动检测FFmpeg路径）
                 processor = OptimizedVideoTimelineSyncProcessor(
-                    ffmpeg_path="ffmpeg/bin/ffmpeg.exe",
+                    # ffmpeg_path 参数移除，让处理器自动检测
                     use_gpu=request.use_gpu,
                     quality_preset=request.quality_preset,
                     enable_frame_interpolation=request.enable_frame_interpolation

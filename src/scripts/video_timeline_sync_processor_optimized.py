@@ -32,7 +32,7 @@ class OptimizedVideoTimelineSyncProcessor:
     
     def __init__(
         self,
-        ffmpeg_path: str = "ffmpeg",
+        ffmpeg_path: str = None,  # 改为可选，自动检测
         use_gpu: bool = False,
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = False,
@@ -42,17 +42,62 @@ class OptimizedVideoTimelineSyncProcessor:
         初始化优化处理器
         
         Args:
-            ffmpeg_path: FFmpeg可执行文件路径
+            ffmpeg_path: FFmpeg可执行文件路径（可选，自动检测）
             use_gpu: 是否使用GPU加速
             quality_preset: 质量预设 (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
             max_segments_per_batch: 每批最多处理的片段数（默认500，避免命令行过长）
         """
-        self.ffmpeg_path = ffmpeg_path
+        self.ffmpeg_path = ffmpeg_path or self._detect_ffmpeg_path()
         self.use_gpu = use_gpu
         self.quality_preset = quality_preset
         self.enable_frame_interpolation = enable_frame_interpolation
         self.max_segments_per_batch = max_segments_per_batch
+    
+    def _detect_ffmpeg_path(self) -> str:
+        """
+        自动检测FFmpeg路径
+        
+        Returns:
+            FFmpeg可执行文件路径
+        """
+        import platform
+        import os
+        from pathlib import Path
+        
+        system = platform.system()
+        
+        # 1. 尝试项目目录中的FFmpeg
+        if system == "Windows":
+            # Windows: 使用项目中的ffmpeg.exe
+            project_ffmpeg = Path("ffmpeg/bin/ffmpeg.exe")
+            if project_ffmpeg.exists():
+                print(f"✅ 使用项目FFmpeg: {project_ffmpeg}")
+                return str(project_ffmpeg)
+        else:
+            # Linux/Mac: 使用项目中的ffmpeg（如果存在）
+            project_ffmpeg = Path("ffmpeg/bin/ffmpeg")
+            if project_ffmpeg.exists():
+                print(f"✅ 使用项目FFmpeg: {project_ffmpeg}")
+                return str(project_ffmpeg)
+        
+        # 2. 尝试系统PATH中的FFmpeg
+        try:
+            import shutil
+            system_ffmpeg = shutil.which("ffmpeg")
+            if system_ffmpeg:
+                print(f"✅ 使用系统FFmpeg: {system_ffmpeg}")
+                return system_ffmpeg
+        except:
+            pass
+        
+        # 3. 默认值
+        if system == "Windows":
+            print(f"⚠️  未找到FFmpeg，使用默认路径: ffmpeg.exe")
+            return "ffmpeg.exe"
+        else:
+            print(f"⚠️  未找到FFmpeg，使用默认路径: ffmpeg")
+            return "ffmpeg"
     
     def build_complex_filter_chain(
         self,
