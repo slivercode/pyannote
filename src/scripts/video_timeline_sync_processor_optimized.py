@@ -35,7 +35,8 @@ class OptimizedVideoTimelineSyncProcessor:
         ffmpeg_path: str = "ffmpeg",
         use_gpu: bool = False,
         quality_preset: str = "medium",
-        enable_frame_interpolation: bool = False
+        enable_frame_interpolation: bool = False,
+        max_segments_per_batch: int = 500  # 新增：每批最多处理的片段数
     ):
         """
         初始化优化处理器
@@ -45,11 +46,13 @@ class OptimizedVideoTimelineSyncProcessor:
             use_gpu: 是否使用GPU加速
             quality_preset: 质量预设 (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
+            max_segments_per_batch: 每批最多处理的片段数（默认500，避免命令行过长）
         """
         self.ffmpeg_path = ffmpeg_path
         self.use_gpu = use_gpu
         self.quality_preset = quality_preset
         self.enable_frame_interpolation = enable_frame_interpolation
+        self.max_segments_per_batch = max_segments_per_batch
     
     def build_complex_filter_chain(
         self,
@@ -117,6 +120,212 @@ class OptimizedVideoTimelineSyncProcessor:
         
         return filter_chain
     
+    def _should_use_batch_processing(self, segments: List[VideoSegment]) -> bool:
+        """
+        判断是否需要使用分批处理
+        
+        Args:
+            segments: 视频片段列表
+            
+        Returns:
+            是否需要分批处理
+        """
+        # 如果片段数超过阈值，使用分批处理
+        return len(segments) > self.max_segments_per_batch
+    
+    def _split_segments_into_batches(
+        self,
+        segments: List[VideoSegment]
+    ) -> List[List[VideoSegment]]:
+        """
+        将片段列表分割成多个批次
+        
+        Args:
+            segments: 视频片段列表
+            
+        Returns:
+            批次列表，每个批次包含一组片段
+        """
+        batches = []
+        for i in range(0, len(segments), self.max_segments_per_batch):
+            batch = segments[i:i + self.max_segments_per_batch]
+            batches.append(batch)
+        
+        print(f"📦 分批处理: {len(segments)} 个片段 → {len(batches)} 批")
+        for i, batch in enumerate(batches):
+            print(f"   批次{i+1}: {len(batch)} 个片段")
+        
+        return batches
+    
+    def _process_batch(
+        self,
+        input_video_path: str,
+        segments: List[VideoSegment],
+        output_path: str,
+        batch_index: int,
+        total_batches: int
+    ) -> str:
+        """
+        处理单个批次
+        
+        Args:
+            input_video_path: 输入视频路径
+            segments: 该批次的片段列表
+            output_path: 输出路径
+            batch_index: 批次索引（从0开始）
+            total_batches: 总批次数
+            
+        Returns:
+            输出文件路径
+        """
+        print(f"\n🔧 处理批次 {batch_index+1}/{total_batches} ({len(segments)} 个片段)...")
+        
+        # 构建滤镜链
+        filter_chain = self.build_complex_filter_chain(
+            segments,
+            enable_interpolation=self.enable_frame_interpolation
+        )
+        
+        # 构建FFmpeg命令（不包含音频）
+        cmd = [self.ffmpeg_path, '-y']
+        
+        # GPU加速配置
+        if self.use_gpu:
+            cmd.extend([
+                '-hwaccel', 'cuda',
+                '-hwaccel_output_format', 'cuda',
+                '-hwaccel_device', '0'
+            ])
+        
+        # 输入文件
+        cmd.extend(['-i', input_video_path])
+        
+        # 复杂滤镜链
+        cmd.extend(['-filter_complex', filter_chain])
+        
+        # 输出映射（只输出视频）
+        cmd.extend(['-map', '[outv]'])
+        
+        # 视频编码设置
+        if self.use_gpu:
+            cmd.extend([
+                '-c:v', 'h264_nvenc',
+                '-preset', self.quality_preset,
+                '-b:v', '5M'
+            ])
+        else:
+            cmd.extend([
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '23'
+            ])
+        
+        # 输出文件
+        cmd.append(output_path)
+        
+        # 执行FFmpeg
+        try:
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                check=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            print(f"   ✅ 批次 {batch_index+1} 处理完成")
+            return output_path
+        except subprocess.CalledProcessError as e:
+            print(f"   ❌ 批次 {batch_index+1} 处理失败: {e}")
+            raise
+    
+    def _concatenate_batch_videos(
+        self,
+        batch_videos: List[str],
+        input_audio_path: str,
+        output_path: str
+    ) -> str:
+        """
+        拼接多个批次的视频并添加音频
+        
+        Args:
+            batch_videos: 批次视频文件路径列表
+            input_audio_path: 输入音频路径
+            output_path: 最终输出路径
+            
+        Returns:
+            输出文件路径
+        """
+        print(f"\n🔗 拼接 {len(batch_videos)} 个批次视频...")
+        
+        # 创建concat文件列表
+        import tempfile
+        concat_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        
+        try:
+            for video in batch_videos:
+                # 使用绝对路径
+                abs_path = str(Path(video).resolve())
+                # 转换为Unix风格路径
+                unix_path = abs_path.replace('\\', '/')
+                concat_file.write(f"file '{unix_path}'\n")
+            
+            concat_file.close()
+            
+            # 构建拼接命令
+            cmd = [self.ffmpeg_path, '-y']
+            
+            # 输入concat文件
+            cmd.extend([
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', concat_file.name
+            ])
+            
+            # 输入音频
+            cmd.extend(['-i', input_audio_path])
+            
+            # 映射视频和音频
+            cmd.extend([
+                '-map', '0:v',
+                '-map', '1:a'
+            ])
+            
+            # 编码设置
+            cmd.extend([
+                '-c:v', 'copy',  # 直接复制视频（已经编码过）
+                '-c:a', 'aac',
+                '-b:a', '192k'
+            ])
+            
+            # 其他设置
+            cmd.extend([
+                '-movflags', '+faststart',
+                '-max_muxing_queue_size', '9999'
+            ])
+            
+            # 输出文件
+            cmd.append(output_path)
+            
+            # 执行拼接
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                check=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            
+            print(f"   ✅ 拼接完成: {output_path}")
+            
+            return output_path
+            
+        finally:
+            # 清理临时文件
+            try:
+                Path(concat_file.name).unlink()
+            except:
+                pass
+    
     def process_video_optimized(
         self,
         input_video_path: str,
@@ -126,7 +335,7 @@ class OptimizedVideoTimelineSyncProcessor:
         progress_callback=None
     ) -> str:
         """
-        优化的视频处理流程（一次性处理）
+        优化的视频处理流程（支持分批处理）
         
         Args:
             input_video_path: 输入视频路径
@@ -139,13 +348,131 @@ class OptimizedVideoTimelineSyncProcessor:
             输出文件路径
         """
         print("\n" + "="*60)
-        print("🚀 优化处理模式：一次性处理")
+        print("🚀 优化处理模式")
         print("="*60)
         print(f"📹 输入视频: {input_video_path}")
         print(f"🎵 输入音频: {input_audio_path}")
         print(f"📊 片段数量: {len(segments)}")
         print(f"💾 输出路径: {output_path}")
         
+        # 判断是否需要分批处理
+        if self._should_use_batch_processing(segments):
+            print(f"\n⚠️  片段数量({len(segments)})超过阈值({self.max_segments_per_batch})，使用分批处理模式")
+            return self._process_video_in_batches(
+                input_video_path,
+                input_audio_path,
+                segments,
+                output_path,
+                progress_callback
+            )
+        else:
+            print(f"\n✅ 片段数量({len(segments)})在阈值内，使用一次性处理模式")
+            return self._process_video_single_pass(
+                input_video_path,
+                input_audio_path,
+                segments,
+                output_path,
+                progress_callback
+            )
+    
+    def _process_video_in_batches(
+        self,
+        input_video_path: str,
+        input_audio_path: str,
+        segments: List[VideoSegment],
+        output_path: str,
+        progress_callback=None
+    ) -> str:
+        """
+        分批处理视频
+        
+        Args:
+            input_video_path: 输入视频路径
+            input_audio_path: 输入音频路径
+            segments: 视频片段列表
+            output_path: 输出路径
+            progress_callback: 进度回调函数
+            
+        Returns:
+            输出文件路径
+        """
+        import tempfile
+        
+        # 1. 分割片段
+        if progress_callback:
+            progress_callback(10, "分割片段")
+        
+        batches = self._split_segments_into_batches(segments)
+        
+        # 2. 处理每个批次
+        batch_videos = []
+        temp_dir = Path(tempfile.gettempdir()) / f"video_sync_batches_{id(self)}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            for i, batch in enumerate(batches):
+                if progress_callback:
+                    progress = 20 + int(60 * (i / len(batches)))
+                    progress_callback(progress, f"处理批次 {i+1}/{len(batches)}")
+                
+                batch_output = temp_dir / f"batch_{i:04d}.mp4"
+                self._process_batch(
+                    input_video_path,
+                    batch,
+                    str(batch_output),
+                    i,
+                    len(batches)
+                )
+                batch_videos.append(str(batch_output))
+            
+            # 3. 拼接所有批次
+            if progress_callback:
+                progress_callback(85, "拼接批次视频")
+            
+            result = self._concatenate_batch_videos(
+                batch_videos,
+                input_audio_path,
+                output_path
+            )
+            
+            if progress_callback:
+                progress_callback(100, "处理完成")
+            
+            print(f"\n✅ 分批处理完成！")
+            print(f"   输出文件: {output_path}")
+            
+            return result
+            
+        finally:
+            # 清理临时文件
+            try:
+                import shutil
+                shutil.rmtree(temp_dir)
+                print(f"🧹 已清理临时文件")
+            except:
+                pass
+    
+    def _process_video_single_pass(
+        self,
+        input_video_path: str,
+        input_audio_path: str,
+        segments: List[VideoSegment],
+        output_path: str,
+        progress_callback=None
+    ) -> str:
+        """
+        一次性处理视频（原有逻辑）
+        
+        Args:
+            input_video_path: 输入视频路径
+            input_audio_path: 输入音频路径
+            segments: 视频片段列表
+            output_path: 输出路径
+            progress_callback: 进度回调函数
+        
+        Returns:
+            输出文件路径
+        """
         # 1. 构建复杂滤镜链
         if progress_callback:
             progress_callback(10, "构建滤镜链")
@@ -209,7 +536,7 @@ class OptimizedVideoTimelineSyncProcessor:
             if progress_callback:
                 progress_callback(100, "处理完成")
             
-            print(f"\n✅ 处理完成！")
+            print(f"\n✅ 一次性处理完成！")
             print(f"   输出文件: {output_path}")
             
             # 验证输出文件
