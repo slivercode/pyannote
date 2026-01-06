@@ -40,6 +40,9 @@ class VideoSyncRequest(BaseModel):
     # GPU加速选项
     use_gpu: bool = False  # 是否使用GPU加速
     gpu_id: int = 0  # GPU设备ID
+    
+    # 性能优化选项（新增）
+    use_optimized_mode: bool = True  # 是否使用优化模式（一次性处理，默认启用）
 
 
 # 视频同步任务字典
@@ -175,22 +178,53 @@ async def start_video_sync(request: VideoSyncRequest):
             
             # 导入视频同步处理器
             sys.path.insert(0, str(scripts_dir))
-            from video_timeline_sync_processor import VideoTimelineSyncProcessor
             
-            # 创建处理器
-            processor = VideoTimelineSyncProcessor(
-                original_video_path=str(original_video_path) if original_video_path else None,
-                original_srt_path=str(original_srt_path),
-                updated_audio_path=str(updated_audio_path),
-                updated_srt_path=str(updated_srt_path),
-                output_dir=str(task_output_dir),
-                max_slowdown_ratio=request.max_slowdown_ratio,
-                quality_preset=request.quality_preset,
-                enable_frame_interpolation=request.enable_frame_interpolation,
-                include_gaps=request.include_gaps,
-                use_gpu=request.use_gpu,
-                gpu_id=request.gpu_id
-            )
+            # 根据优化模式选择处理器
+            if request.use_optimized_mode:
+                print("🚀 使用优化模式（一次性处理）")
+                from video_timeline_sync_processor_optimized import OptimizedVideoTimelineSyncProcessor
+                from video_timeline_sync_processor import VideoTimelineSyncProcessor
+                
+                # 先用标准处理器分析时间轴
+                analyzer = VideoTimelineSyncProcessor(
+                    original_video_path=str(original_video_path) if original_video_path else None,
+                    original_srt_path=str(original_srt_path),
+                    updated_audio_path=str(updated_audio_path),
+                    updated_srt_path=str(updated_srt_path),
+                    output_dir=str(task_output_dir),
+                    max_slowdown_ratio=request.max_slowdown_ratio,
+                    quality_preset=request.quality_preset,
+                    enable_frame_interpolation=request.enable_frame_interpolation,
+                    include_gaps=request.include_gaps,
+                    use_gpu=request.use_gpu,
+                    gpu_id=request.gpu_id
+                )
+                
+                # 创建优化处理器
+                processor = OptimizedVideoTimelineSyncProcessor(
+                    ffmpeg_path="ffmpeg/bin/ffmpeg.exe",
+                    use_gpu=request.use_gpu,
+                    quality_preset=request.quality_preset,
+                    enable_frame_interpolation=request.enable_frame_interpolation
+                )
+            else:
+                print("💻 使用标准模式（多次处理）")
+                from video_timeline_sync_processor import VideoTimelineSyncProcessor
+                
+                processor = VideoTimelineSyncProcessor(
+                    original_video_path=str(original_video_path) if original_video_path else None,
+                    original_srt_path=str(original_srt_path),
+                    updated_audio_path=str(updated_audio_path),
+                    updated_srt_path=str(updated_srt_path),
+                    output_dir=str(task_output_dir),
+                    max_slowdown_ratio=request.max_slowdown_ratio,
+                    quality_preset=request.quality_preset,
+                    enable_frame_interpolation=request.enable_frame_interpolation,
+                    include_gaps=request.include_gaps,
+                    use_gpu=request.use_gpu,
+                    gpu_id=request.gpu_id
+                )
+                analyzer = processor
             
             # 如果没有提供视频文件，只进行差异分析
             if not original_video_path:
@@ -199,7 +233,7 @@ async def start_video_sync(request: VideoSyncRequest):
                     video_sync_tasks[task_id]["progress"] = 50
                 
                 # 只分析时间轴差异
-                timeline_diffs = processor.analyze_timeline_diff()
+                timeline_diffs = analyzer.analyze_timeline_diff()
                 
                 with task_lock:
                     video_sync_tasks[task_id]["status"] = "completed"
@@ -212,20 +246,75 @@ async def start_video_sync(request: VideoSyncRequest):
             
             # 执行完整的视频同步流程
             with task_lock:
-                video_sync_tasks[task_id]["stage"] = "切割视频片段"
+                video_sync_tasks[task_id]["stage"] = "处理视频"
                 video_sync_tasks[task_id]["progress"] = 30
             
-            # 执行处理
-            result = processor.process()
+            # 根据模式执行处理
+            if request.use_optimized_mode:
+                # 优化模式：使用复杂滤镜链一次性处理
+                print("🚀 执行优化处理流程...")
+                
+                # 1. 分析时间轴差异
+                timeline_diffs = analyzer.analyze_timeline_diff()
+                
+                # 2. 获取视频时长
+                video_duration = analyzer._get_video_duration()
+                
+                # 3. 转换为VideoSegment格式（包含间隔片段）
+                from video_timeline_sync_processor_optimized import create_segments_from_timeline_diffs
+                segments = create_segments_from_timeline_diffs(
+                    timeline_diffs,
+                    original_video_duration=video_duration,
+                    include_gaps=request.include_gaps
+                )
+                
+                # 4. 估算处理时间
+                estimate = processor.estimate_processing_time(
+                    video_duration_sec=video_duration,
+                    num_segments=len(segments),
+                    slowdown_segments=sum(1 for s in segments if s.needs_slowdown)
+                )
+                
+                print(f"⏱️  预计处理时间: {estimate['estimated_minutes']:.1f} 分钟")
+                
+                # 5. 执行优化处理
+                output_path = task_output_dir / "synced_video.mp4"
+                
+                def progress_callback(progress: int, message: str):
+                    with task_lock:
+                        video_sync_tasks[task_id]["progress"] = progress
+                        video_sync_tasks[task_id]["stage"] = message
+                
+                processor.process_video_optimized(
+                    input_video_path=str(original_video_path),
+                    input_audio_path=str(updated_audio_path),
+                    segments=segments,
+                    output_path=str(output_path),
+                    progress_callback=progress_callback
+                )
+                
+                result = {
+                    'success': True,
+                    'output_path': str(output_path),
+                    'segments_processed': len(segments),
+                    'mode': 'optimized'
+                }
+            else:
+                # 标准模式：多次FFmpeg调用
+                print("💻 执行标准处理流程...")
+                result = processor.process()
+                result['mode'] = 'standard'
             
+            # 执行处理
             if result['success']:
                 with task_lock:
                     video_sync_tasks[task_id]["status"] = "completed"
                     video_sync_tasks[task_id]["progress"] = 100
                     video_sync_tasks[task_id]["stage"] = "完成"
-                    video_sync_tasks[task_id]["message"] = "视频同步完成"
+                    video_sync_tasks[task_id]["message"] = f"视频同步完成（{result.get('mode', 'unknown')}模式）"
                     video_sync_tasks[task_id]["output_path"] = result['output_path']
                     video_sync_tasks[task_id]["segments_processed"] = result.get('segments_processed', 0)
+                    video_sync_tasks[task_id]["processing_mode"] = result.get('mode', 'unknown')
                     video_sync_tasks[task_id]["completed_at"] = datetime.now().isoformat()
                     # 生成下载URL
                     output_filename = os.path.basename(result['output_path'])

@@ -4,7 +4,7 @@
     "apiUrl": "http://192.168.110.204:9880",
     "roles": [
       {
-        "name": "spk01",
+        "name": "",
         "refAudioPath": "cs3.mp3",
         "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
         "promptLang": "ja",
@@ -32,6 +32,36 @@
         "testStatus": "success",
         "testMessage": "✅ 测试成功！点击播放按钮试听",
         "testAudioUrl": "blob:http://127.0.0.1:8515/875b69c0-0dc2-469d-886e-6a2209de5b7f"
+      },
+      {
+        "name": "成女1",
+        "refAudioPath": "成女1.MP3",
+        "promptText": "今夜の月、すごく綺麗だね。",
+        "promptLang": "ja",
+        "speedFactor": 1,
+        "testStatus": "success",
+        "testMessage": "✅ 测试成功！点击播放按钮试听",
+        "testAudioUrl": "blob:http://127.0.0.1:8515/72ad10d3-6a11-42b7-bfc7-d062e4b69552"
+      },
+      {
+        "name": "成男",
+        "refAudioPath": "成男.MP3",
+        "promptText": "今夜の月、すごく綺麗だね。",
+        "promptLang": "ja",
+        "speedFactor": 1,
+        "testStatus": "success",
+        "testMessage": "✅ 测试成功！点击播放按钮试听",
+        "testAudioUrl": "blob:http://127.0.0.1:8515/2c9d38e2-b715-4a2b-95ca-3ec5d1adec82"
+      },
+      {
+        "name": "",
+        "refAudioPath": "",
+        "promptText": "",
+        "promptLang": "zh",
+        "speedFactor": 1,
+        "testStatus": null,
+        "testMessage": "",
+        "testAudioUrl": null
       }
     ]
   },

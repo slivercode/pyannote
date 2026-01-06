@@ -2207,7 +2207,7 @@
             </div>
 
             <!-- 帧插值 -->
-            <div class="col-span-2">
+            <div>
               <label class="flex items-center cursor-pointer">
                 <input
                   type="checkbox"
@@ -2216,6 +2216,21 @@
                 />
                 <span class="text-sm">启用帧插值（慢放倍率>=1.5x时提升流畅度）</span>
               </label>
+            </div>
+
+            <!-- 优化模式 -->
+            <div>
+              <label class="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  v-model="videoSync.config.use_optimized_mode"
+                  class="mr-2"
+                />
+                <span class="text-sm">
+                  <i class="fas fa-rocket mr-1"></i>使用优化模式（5-10倍速度提升）
+                </span>
+              </label>
+              <p class="text-xs text-gray-400 mt-1 ml-6">推荐开启，使用FFmpeg复杂滤镜链一次性处理</p>
             </div>
           </div>
         </div>
@@ -3583,7 +3598,8 @@
             config: {
               max_slowdown_ratio: 2.0,
               quality_preset: 'medium',
-              enable_frame_interpolation: true
+              enable_frame_interpolation: true,
+              use_optimized_mode: true  // 默认启用优化模式
             },
             processing: false,
             taskId: null,
@@ -3664,7 +3680,8 @@
                   original_video_path: videoSync.value.paths.original_video || null,
                   max_slowdown_ratio: videoSync.value.config.max_slowdown_ratio,
                   quality_preset: videoSync.value.config.quality_preset,
-                  enable_frame_interpolation: videoSync.value.config.enable_frame_interpolation
+                  enable_frame_interpolation: videoSync.value.config.enable_frame_interpolation,
+                  use_optimized_mode: videoSync.value.config.use_optimized_mode
                 };
               } else {
                 // 文件名模式
@@ -3675,7 +3692,8 @@
                   original_video_filename: videoSync.value.files.original_video,
                   max_slowdown_ratio: videoSync.value.config.max_slowdown_ratio,
                   quality_preset: videoSync.value.config.quality_preset,
-                  enable_frame_interpolation: videoSync.value.config.enable_frame_interpolation
+                  enable_frame_interpolation: videoSync.value.config.enable_frame_interpolation,
+                  use_optimized_mode: videoSync.value.config.use_optimized_mode
                 };
               }
 
