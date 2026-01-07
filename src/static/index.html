@@ -1514,7 +1514,7 @@
               </div>
 
               <!-- 描边设置 -->
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-2 gap-3 mb-3">
                 <div>
                   <label class="block text-sm font-medium mb-2">
                     <i class="fas fa-border-style mr-1"></i>描边颜色
@@ -1542,6 +1542,68 @@
                     <option :value="3">粗 (3px)</option>
                     <option :value="4">很粗 (4px)</option>
                   </select>
+                </div>
+              </div>
+
+              <!-- 字体粗细 -->
+              <div class="mb-3">
+                <label class="block text-sm font-medium mb-2">
+                  <i class="fas fa-bold mr-1"></i>字体粗细: <span class="text-primary">{{ videoMerger.subtitleBoldWeight }}</span> <span class="text-gray-400 text-xs">{{ getBoldWeightLabel(videoMerger.subtitleBoldWeight) }}</span>
+                </label>
+                <div class="flex items-center space-x-3">
+                  <input
+                    type="range"
+                    v-model="videoMerger.subtitleBoldWeight"
+                    min="0"
+                    max="900"
+                    step="100"
+                    class="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <span class="text-white font-medium w-16 text-center">{{ videoMerger.subtitleBoldWeight }}</span>
+                </div>
+                <div class="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>正常</span>
+                  <span>细体</span>
+                  <span>常规</span>
+                  <span>加粗</span>
+                  <span>特粗</span>
+                </div>
+              </div>
+
+              <!-- 字幕位置 -->
+              <div class="mb-3">
+                <label class="block text-sm font-medium mb-2">
+                  <i class="fas fa-arrows-alt mr-1"></i>字幕位置
+                </label>
+                <select
+                  v-model="videoMerger.subtitlePosition"
+                  class="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:border-primary focus:outline-none"
+                >
+                  <option value="bottom">底部居中</option>
+                  <option value="top">顶部居中</option>
+                  <option value="middle">中部居中</option>
+                  <option value="bottom-left">底部左对齐</option>
+                  <option value="bottom-right">底部右对齐</option>
+                  <option value="top-left">顶部左对齐</option>
+                  <option value="top-right">顶部右对齐</option>
+                </select>
+              </div>
+
+              <!-- 垂直边距 -->
+              <div class="mb-3">
+                <label class="block text-sm font-medium mb-2">
+                  <i class="fas fa-arrows-alt-v mr-1"></i>垂直边距: <span class="text-primary">{{ videoMerger.subtitleMarginV }}px</span>
+                </label>
+                <div class="flex items-center space-x-3">
+                  <input
+                    type="range"
+                    v-model="videoMerger.subtitleMarginV"
+                    min="0"
+                    max="100"
+                    step="5"
+                    class="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <span class="text-white font-medium w-16 text-center">{{ videoMerger.subtitleMarginV }}px</span>
                 </div>
               </div>
             </div>
@@ -2452,6 +2514,9 @@
             subtitleColor: 'white',
             subtitleOutlineColor: 'black',
             subtitleOutlineWidth: 2,
+            subtitlePosition: 'bottom',
+            subtitleBoldWeight: 0,
+            subtitleMarginV: 20,
             cleanSpeakers: true,  // 默认启用说话人标识清理
             task: null,
             resultVideo: null,
@@ -3477,6 +3542,16 @@
             return colorMap[colorName] || '#FFFFFF';
           };
 
+          // 获取字体粗细标签
+          const getBoldWeightLabel = (weight) => {
+            if (weight === 0) return '(正常)';
+            if (weight < 400) return '(细体)';
+            if (weight === 400) return '(常规粗体)';
+            if (weight < 700) return '(加粗)';
+            if (weight === 700) return '(加粗)';
+            return '(特粗)';
+          };
+
           // 格式化视频合并状态
           const formatVideoMergeStatus = (status) => {
             const map = {
@@ -3506,6 +3581,9 @@
               formData.append('subtitle_color', videoMerger.value.subtitleColor);
               formData.append('subtitle_outline_color', videoMerger.value.subtitleOutlineColor);
               formData.append('subtitle_outline_width', videoMerger.value.subtitleOutlineWidth);
+              formData.append('subtitle_position', videoMerger.value.subtitlePosition);
+              formData.append('subtitle_bold_weight', videoMerger.value.subtitleBoldWeight);
+              formData.append('subtitle_margin_v', videoMerger.value.subtitleMarginV);
 
               // 根据是否启用说话人标识清理选择不同的API端点
               let apiEndpoint = '/api/video-merger/burn-subtitle';
@@ -3858,6 +3936,7 @@
             handleSubtitleUpload,
             canStartSubtitleBurn,
             getColorHex,
+            getBoldWeightLabel,
             formatVideoMergeStatus,
             startSubtitleBurn,
             openVideoMergeFolder,

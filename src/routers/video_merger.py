@@ -25,7 +25,10 @@ async def burn_subtitle_to_video(
     subtitle_font_name: str = Form("Arial", description="字幕字体名称"),
     subtitle_color: str = Form("white", description="字幕颜色"),
     subtitle_outline_color: str = Form("black", description="字幕描边颜色"),
-    subtitle_outline_width: int = Form(2, description="字幕描边宽度")
+    subtitle_outline_width: int = Form(2, description="字幕描边宽度"),
+    subtitle_position: str = Form("bottom", description="字幕位置"),
+    subtitle_bold_weight: int = Form(0, description="字体粗细(0-900)"),
+    subtitle_margin_v: int = Form(20, description="垂直边距(像素)")
 ):
     """
     视频字幕烧录API
@@ -73,7 +76,10 @@ async def burn_subtitle_to_video(
                 "font_name": subtitle_font_name,
                 "color": subtitle_color,
                 "outline_color": subtitle_outline_color,
-                "outline_width": subtitle_outline_width
+                "outline_width": subtitle_outline_width,
+                "position": subtitle_position,
+                "bold_weight": subtitle_bold_weight,
+                "margin_v": subtitle_margin_v
             }
         }
         
@@ -95,7 +101,10 @@ async def burn_subtitle_to_video(
                     subtitle_font_name=subtitle_font_name,
                     subtitle_color=subtitle_color,
                     subtitle_outline_color=subtitle_outline_color,
-                    subtitle_outline_width=subtitle_outline_width
+                    subtitle_outline_width=subtitle_outline_width,
+                    subtitle_position=subtitle_position,
+                    subtitle_bold_weight=subtitle_bold_weight,
+                    subtitle_margin_v=subtitle_margin_v
                 )
                 
                 # 计算处理时间
@@ -141,6 +150,9 @@ async def burn_subtitle_to_video_with_cleaning(
     subtitle_color: str = Form("white", description="字幕颜色"),
     subtitle_outline_color: str = Form("black", description="字幕描边颜色"),
     subtitle_outline_width: int = Form(2, description="字幕描边宽度"),
+    subtitle_position: str = Form("bottom", description="字幕位置"),
+    subtitle_bold_weight: int = Form(0, description="字体粗细(0-900)"),
+    subtitle_margin_v: int = Form(20, description="垂直边距(像素)"),
     clean_speakers: bool = Form(True, description="是否清理说话人标识")
 ):
     """
@@ -215,7 +227,10 @@ async def burn_subtitle_to_video_with_cleaning(
                 "font_name": subtitle_font_name,
                 "color": subtitle_color,
                 "outline_color": subtitle_outline_color,
-                "outline_width": subtitle_outline_width
+                "outline_width": subtitle_outline_width,
+                "position": subtitle_position,
+                "bold_weight": subtitle_bold_weight,
+                "margin_v": subtitle_margin_v
             },
             "clean_speakers": clean_speakers
         }
@@ -240,6 +255,9 @@ async def burn_subtitle_to_video_with_cleaning(
                     subtitle_color=subtitle_color,
                     subtitle_outline_color=subtitle_outline_color,
                     subtitle_outline_width=subtitle_outline_width,
+                    subtitle_position=subtitle_position,
+                    subtitle_bold_weight=subtitle_bold_weight,
+                    subtitle_margin_v=subtitle_margin_v,
                     clean_speakers=clean_speakers
                 )
                 

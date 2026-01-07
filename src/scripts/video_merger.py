@@ -133,7 +133,9 @@ class VideoMerger:
         subtitle_color: str = "white",
         subtitle_outline_color: str = "black",
         subtitle_outline_width: int = 2,
-        subtitle_position: str = "bottom"
+        subtitle_position: str = "bottom",
+        subtitle_bold_weight: int = 0,
+        subtitle_margin_v: int = 20
     ) -> str:
         """
         将字幕烧录到视频中（硬字幕）
@@ -148,6 +150,8 @@ class VideoMerger:
             subtitle_outline_color: 字幕描边颜色，默认黑色
             subtitle_outline_width: 字幕描边宽度，默认2
             subtitle_position: 字幕位置，默认bottom（底部）
+            subtitle_bold_weight: 字体粗细（0-900），0=正常，400=常规粗体，700=加粗，900=特粗，默认0
+            subtitle_margin_v: 垂直边距（像素），默认20
         
         Returns:
             输出视频路径
@@ -182,17 +186,50 @@ class VideoMerger:
         print(f"🎨 字体设置:")
         print(f"   字体: {font_name}")
         print(f"   大小: {font_size}")
+        print(f"   粗细: {subtitle_bold_weight} {'(正常)' if subtitle_bold_weight == 0 else '(加粗)' if subtitle_bold_weight >= 400 else ''}")
         print(f"   颜色: {subtitle_color}")
         print(f"   描边: {subtitle_outline_color} (宽度: {subtitle_outline_width})")
         print(f"   位置: {subtitle_position}")
+        print(f"   垂直边距: {subtitle_margin_v}px")
         
         # 转义字幕路径中的特殊字符（Windows路径处理）
         subtitle_path_str = str(subtitle_path).replace('\\', '/').replace(':', '\\:')
         
         print(f"🔧 FFmpeg将使用的字幕文件路径: {subtitle_path_str}")
         
+        # 位置映射
+        position_map = {
+            'top': 8,           # 顶部居中
+            'middle': 5,        # 中部居中
+            'bottom': 2,        # 底部居中
+            'top-left': 7,      # 顶部左对齐
+            'top-right': 9,     # 顶部右对齐
+            'bottom-left': 1,   # 底部左对齐
+            'bottom-right': 3   # 底部右对齐
+        }
+        
+        alignment = position_map.get(subtitle_position, 2)  # 默认底部居中
+        
         # 构建字幕样式
-        subtitle_style = f"FontName={font_name},FontSize={font_size},PrimaryColour=&H{self._color_to_hex(subtitle_color)},OutlineColour=&H{self._color_to_hex(subtitle_outline_color)},Outline={subtitle_outline_width}"
+        # Bold: 0=正常, -1=粗体（传统方式）
+        # 或者使用具体数值: 0-900 (0=正常, 400=常规粗体, 700=加粗, 900=特粗)
+        # ASS格式支持 -1(粗体) 或 0(正常)，但某些实现支持数值
+        # 为了兼容性，我们将数值映射为 -1 或 0
+        if subtitle_bold_weight >= 400:
+            bold_value = -1  # 粗体
+        else:
+            bold_value = 0   # 正常
+        
+        subtitle_style = (
+            f"FontName={font_name},"
+            f"FontSize={font_size},"
+            f"Bold={bold_value},"
+            f"PrimaryColour=&H{self._color_to_hex(subtitle_color)},"
+            f"OutlineColour=&H{self._color_to_hex(subtitle_outline_color)},"
+            f"Outline={subtitle_outline_width},"
+            f"Alignment={alignment},"
+            f"MarginV={subtitle_margin_v}"
+        )
         
         # 构建FFmpeg命令
         cmd = [
@@ -246,6 +283,8 @@ class VideoMerger:
         subtitle_outline_color: str = "black",
         subtitle_outline_width: int = 2,
         subtitle_position: str = "bottom",
+        subtitle_bold_weight: int = 0,
+        subtitle_margin_v: int = 20,
         clean_speakers: bool = True
     ) -> str:
         """
@@ -261,6 +300,8 @@ class VideoMerger:
             subtitle_outline_color: 字幕描边颜色，默认黑色
             subtitle_outline_width: 字幕描边宽度，默认2
             subtitle_position: 字幕位置，默认bottom（底部）
+            subtitle_bold_weight: 字体粗细（0-900），默认0
+            subtitle_margin_v: 垂直边距（像素），默认20
             clean_speakers: 是否清理说话人标识，默认True
         
         Returns:
@@ -341,7 +382,9 @@ class VideoMerger:
                 subtitle_color=subtitle_color,
                 subtitle_outline_color=subtitle_outline_color,
                 subtitle_outline_width=subtitle_outline_width,
-                subtitle_position=subtitle_position
+                subtitle_position=subtitle_position,
+                subtitle_bold_weight=subtitle_bold_weight,
+                subtitle_margin_v=subtitle_margin_v
             )
             
             return result
