@@ -36,7 +36,10 @@ class OptimizedVideoTimelineSyncProcessor:
         use_gpu: bool = False,
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = False,
-        max_segments_per_batch: int = 500  # 新增：每批最多处理的片段数
+        max_segments_per_batch: int = 300, # 新增：每批最多处理的片段数
+        parallel_workers: int = 1,  # 新增：并行处理的工作线程数（默认1=串行）
+        ffmpeg_threads: int = 0,  # 新增：每个FFmpeg进程的线程数（0=自动，建议4-8）
+        auto_optimize_parallelism: bool = False  # 新增：自动优化并行度（根据CPU核心数）
     ):
         """
         初始化优化处理器
@@ -46,13 +49,24 @@ class OptimizedVideoTimelineSyncProcessor:
             use_gpu: 是否使用GPU加速
             quality_preset: 质量预设 (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
-            max_segments_per_batch: 每批最多处理的片段数（默认500，避免命令行过长）
+            max_segments_per_batch: 每批最多处理的片段数（默认300，避免命令行过长）
+            parallel_workers: 并行处理的工作线程数（默认1=串行，建议2-8）
+            ffmpeg_threads: 每个FFmpeg进程的线程数（0=自动，建议4-8，限制单进程占用）
+            auto_optimize_parallelism: 自动优化并行度（根据CPU核心数自动设置workers和threads）
         """
         self.ffmpeg_path = ffmpeg_path or self._detect_ffmpeg_path()
         self.use_gpu = use_gpu
         self.quality_preset = quality_preset
         self.enable_frame_interpolation = enable_frame_interpolation
         self.max_segments_per_batch = max_segments_per_batch
+        
+        # 自动优化并行度
+        if auto_optimize_parallelism:
+            self.parallel_workers, self.ffmpeg_threads = self._auto_optimize_parallelism()
+            print(f"🔧 自动优化: {self.parallel_workers} 并行任务 × {self.ffmpeg_threads} FFmpeg线程")
+        else:
+            self.parallel_workers = max(1, parallel_workers)
+            self.ffmpeg_threads = ffmpeg_threads
     
     def _detect_ffmpeg_path(self) -> str:
         """
@@ -98,6 +112,75 @@ class OptimizedVideoTimelineSyncProcessor:
         else:
             print(f"⚠️  未找到FFmpeg，使用默认路径: ffmpeg")
             return "ffmpeg"
+    
+    def _auto_optimize_parallelism(self) -> Tuple[int, int]:
+        """
+        根据CPU核心数和实时负载自动优化并行度
+        
+        策略：
+        1. 检测总核心数
+        2. 检测当前CPU使用率，计算空闲核心数
+        3. 根据空闲核心数分配并行任务
+        
+        Returns:
+            (parallel_workers, ffmpeg_threads)
+        """
+        import os
+        
+        cpu_count = os.cpu_count() or 4
+        
+        # 尝试获取实时CPU使用率
+        try:
+            import psutil
+            # 获取1秒内的平均CPU使用率
+            cpu_percent = psutil.cpu_percent(interval=1)
+            idle_percent = 100 - cpu_percent
+            # 计算空闲核心数（保守估计，留20%余量）
+            available_cores = int(cpu_count * (idle_percent / 100) * 0.8)
+            available_cores = max(1, min(available_cores, cpu_count))
+            
+            print(f"💻 检测到 {cpu_count} 个CPU核心")
+            print(f"   当前CPU使用率: {cpu_percent:.1f}%")
+            print(f"   可用空闲核心: {available_cores} 个")
+            
+        except ImportError:
+            # 如果没有psutil，使用全部核心
+            print(f"⚠️  未安装psutil，无法检测CPU负载")
+            print(f"💻 检测到 {cpu_count} 个CPU核心（使用全部）")
+            available_cores = cpu_count
+        except Exception as e:
+            print(f"⚠️  检测CPU负载失败: {e}")
+            print(f"💻 检测到 {cpu_count} 个CPU核心（使用全部）")
+            available_cores = cpu_count
+        
+        # 每个FFmpeg进程建议使用4个线程（编码效率最高）
+        threads_per_task = 4
+        
+        # 根据可用核心数计算并行任务数
+        if available_cores >= 32:
+            # 32核+: 8个并行任务
+            workers = 8
+            threads = 4
+        elif available_cores >= 16:
+            # 16-31核: 4-8个并行任务
+            workers = min(8, available_cores // 4)
+            threads = 4
+        elif available_cores >= 8:
+            # 8-15核: 2-4个并行任务
+            workers = min(4, available_cores // 4)
+            threads = 4
+        elif available_cores >= 4:
+            # 4-7核: 1-2个并行任务
+            workers = max(1, available_cores // 4)
+            threads = 4
+        else:
+            # <4核: 串行处理
+            workers = 1
+            threads = max(1, available_cores)
+        
+        print(f"   推荐配置: {workers} 并行任务 × {threads} 线程/任务 = {workers * threads} 核心利用")
+        
+        return workers, threads
     
     def build_complex_filter_chain(
         self,
@@ -250,6 +333,10 @@ class OptimizedVideoTimelineSyncProcessor:
         
         # 输出映射（只输出视频）
         cmd.extend(['-map', '[outv]'])
+        
+        # 限制FFmpeg线程数
+        if self.ffmpeg_threads > 0:
+            cmd.extend(['-threads', str(self.ffmpeg_threads)])
         
         # 视频编码设置
         if self.use_gpu:
@@ -429,7 +516,7 @@ class OptimizedVideoTimelineSyncProcessor:
         progress_callback=None
     ) -> str:
         """
-        分批处理视频
+        分批处理视频（支持并行）
         
         Args:
             input_video_path: 输入视频路径
@@ -442,6 +529,7 @@ class OptimizedVideoTimelineSyncProcessor:
             输出文件路径
         """
         import tempfile
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
         # 1. 分割片段
         if progress_callback:
@@ -450,25 +538,32 @@ class OptimizedVideoTimelineSyncProcessor:
         batches = self._split_segments_into_batches(segments)
         
         # 2. 处理每个批次
-        batch_videos = []
+        batch_videos = [None] * len(batches)  # 预分配列表，保持顺序
         temp_dir = Path(tempfile.gettempdir()) / f"video_sync_batches_{id(self)}"
         temp_dir.mkdir(parents=True, exist_ok=True)
         
         try:
-            for i, batch in enumerate(batches):
-                if progress_callback:
-                    progress = 20 + int(60 * (i / len(batches)))
-                    progress_callback(progress, f"处理批次 {i+1}/{len(batches)}")
-                
-                batch_output = temp_dir / f"batch_{i:04d}.mp4"
-                self._process_batch(
+            # 决定是否并行处理
+            use_parallel = self.parallel_workers > 1 and len(batches) > 1
+            
+            if use_parallel:
+                print(f"\n🚀 并行处理模式: {self.parallel_workers} 个工作线程")
+                self._process_batches_parallel(
+                    batches,
                     input_video_path,
-                    batch,
-                    str(batch_output),
-                    i,
-                    len(batches)
+                    temp_dir,
+                    batch_videos,
+                    progress_callback
                 )
-                batch_videos.append(str(batch_output))
+            else:
+                print(f"\n🔄 串行处理模式")
+                self._process_batches_serial(
+                    batches,
+                    input_video_path,
+                    temp_dir,
+                    batch_videos,
+                    progress_callback
+                )
             
             # 3. 拼接所有批次
             if progress_callback:
@@ -496,6 +591,93 @@ class OptimizedVideoTimelineSyncProcessor:
                 print(f"🧹 已清理临时文件")
             except:
                 pass
+    
+    def _process_batches_serial(
+        self,
+        batches: List[List[VideoSegment]],
+        input_video_path: str,
+        temp_dir: Path,
+        batch_videos: List[str],
+        progress_callback=None
+    ):
+        """
+        串行处理批次
+        
+        Args:
+            batches: 批次列表
+            input_video_path: 输入视频路径
+            temp_dir: 临时目录
+            batch_videos: 输出视频列表（会被填充）
+            progress_callback: 进度回调
+        """
+        for i, batch in enumerate(batches):
+            if progress_callback:
+                progress = 20 + int(60 * (i / len(batches)))
+                progress_callback(progress, f"处理批次 {i+1}/{len(batches)}")
+            
+            batch_output = temp_dir / f"batch_{i:04d}.mp4"
+            self._process_batch(
+                input_video_path,
+                batch,
+                str(batch_output),
+                i,
+                len(batches)
+            )
+            batch_videos[i] = str(batch_output)
+    
+    def _process_batches_parallel(
+        self,
+        batches: List[List[VideoSegment]],
+        input_video_path: str,
+        temp_dir: Path,
+        batch_videos: List[str],
+        progress_callback=None
+    ):
+        """
+        并行处理批次
+        
+        Args:
+            batches: 批次列表
+            input_video_path: 输入视频路径
+            temp_dir: 临时目录
+            batch_videos: 输出视频列表（会被填充）
+            progress_callback: 进度回调
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        # 创建线程池
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+            # 提交所有任务
+            future_to_index = {}
+            for i, batch in enumerate(batches):
+                batch_output = temp_dir / f"batch_{i:04d}.mp4"
+                future = executor.submit(
+                    self._process_batch,
+                    input_video_path,
+                    batch,
+                    str(batch_output),
+                    i,
+                    len(batches)
+                )
+                future_to_index[future] = i
+            
+            # 等待完成并更新进度
+            completed = 0
+            for future in as_completed(future_to_index):
+                i = future_to_index[future]
+                try:
+                    batch_output = future.result()
+                    batch_videos[i] = batch_output
+                    completed += 1
+                    
+                    if progress_callback:
+                        progress = 20 + int(60 * (completed / len(batches)))
+                        progress_callback(progress, f"已完成 {completed}/{len(batches)} 批次")
+                    
+                    print(f"   ✅ 批次 {i+1} 完成 ({completed}/{len(batches)})")
+                except Exception as e:
+                    print(f"   ❌ 批次 {i+1} 失败: {e}")
+                    raise
     
     def _process_video_single_pass(
         self,
@@ -647,6 +829,10 @@ class OptimizedVideoTimelineSyncProcessor:
             '-map', '[outv]',  # 使用滤镜输出的视频流
             '-map', '1:a'      # 使用输入1（新音频）的音频流
         ])
+        
+        # 限制FFmpeg线程数（避免单进程占用所有CPU）
+        if self.ffmpeg_threads > 0:
+            cmd.extend(['-threads', str(self.ffmpeg_threads)])
         
         # 视频编码设置
         if self.use_gpu:
@@ -825,12 +1011,44 @@ def create_segments_from_timeline_diffs(
 
 # 使用示例
 if __name__ == "__main__":
-    # 创建优化处理器
-    processor = OptimizedVideoTimelineSyncProcessor(
+    print("="*60)
+    print("视频时间轴同步处理器 - 使用示例")
+    print("="*60)
+    
+    # 示例1: 自动优化模式（推荐，根据实时CPU负载自适应）
+    print("\n【示例1】自动优化模式（推荐）")
+    print("   - 自动检测CPU核心数")
+    print("   - 实时监测CPU负载")
+    print("   - 根据空闲核心数动态分配任务")
+    processor_auto = OptimizedVideoTimelineSyncProcessor(
         ffmpeg_path="ffmpeg",
         use_gpu=False,
-        quality_preset="fast",  # 使用fast预设提升速度
-        enable_frame_interpolation=False  # 不启用帧插值（更快）
+        quality_preset="fast",
+        enable_frame_interpolation=False,
+        auto_optimize_parallelism=True  # 自动根据CPU核心数和负载优化
+    )
+    
+    # 示例2: 手动配置模式（精细控制）
+    print("\n【示例2】手动配置模式（高级用户）")
+    processor_manual = OptimizedVideoTimelineSyncProcessor(
+        ffmpeg_path="ffmpeg",
+        use_gpu=False,
+        quality_preset="fast",
+        enable_frame_interpolation=False,
+        parallel_workers=8,  # 8个并行任务
+        ffmpeg_threads=4,    # 每个任务用4个线程
+        max_segments_per_batch=300  # 每批300个片段
+    )
+    
+    # 示例3: 单机模式（4-8核）
+    print("\n【示例3】单机模式（小机器）")
+    processor_single = OptimizedVideoTimelineSyncProcessor(
+        ffmpeg_path="ffmpeg",
+        use_gpu=False,
+        quality_preset="fast",
+        enable_frame_interpolation=False,
+        parallel_workers=2,  # 2个并行任务
+        ffmpeg_threads=4     # 每个任务用4个线程
     )
     
     # 示例：创建片段列表
@@ -841,20 +1059,40 @@ if __name__ == "__main__":
     ]
     
     # 估算处理时间
-    estimate = processor.estimate_processing_time(
+    print("\n" + "="*60)
+    print("处理时间估算")
+    print("="*60)
+    estimate = processor_auto.estimate_processing_time(
         video_duration_sec=300,  # 5分钟视频
-        num_segments=100,
-        slowdown_segments=50
+        num_segments=500,        # 500个片段
+        slowdown_segments=250    # 250个需要慢放
     )
     
-    print("处理时间估算:")
-    print(f"  预计耗时: {estimate['estimated_minutes']:.1f} 分钟")
     print(f"  视频时长: {estimate['video_duration']} 秒")
     print(f"  片段数量: {estimate['num_segments']}")
+    print(f"  慢放片段: {estimate['slowdown_segments']}")
     print(f"  质量预设: {estimate['preset']}")
+    print(f"  并行线程: {processor_auto.parallel_workers}")
+    print(f"  FFmpeg线程: {processor_auto.ffmpeg_threads}")
+    print(f"  预计耗时: {estimate['estimated_minutes']:.1f} 分钟")
+    
+    print("\n💡 性能优化建议:")
+    print("  1. 自动模式（推荐）: auto_optimize_parallelism=True")
+    print("     - 32核服务器空闲时: 8并行×4线程=32核")
+    print("     - 32核服务器50%负载: 4并行×4线程=16核")
+    print("     - 自动适应当前系统负载，避免资源争抢")
+    print("  2. 手动模式（高级）:")
+    print("     - 32核服务器: parallel_workers=8, ffmpeg_threads=4")
+    print("     - 16核服务器: parallel_workers=4, ffmpeg_threads=4")
+    print("     - 8核单机:   parallel_workers=2, ffmpeg_threads=4")
+    print("     - 4核单机:   parallel_workers=1, ffmpeg_threads=4")
+    print("  3. GPU加速:   use_gpu=True (需要NVIDIA显卡)")
+    print("\n📦 依赖安装:")
+    print("  - 自动模式需要 psutil 库: pip install psutil")
+    print("  - 或运行: install_psutil.bat")
     
     # 处理视频（需要实际文件）
-    # processor.process_video_optimized(
+    # processor_auto.process_video_optimized(
     #     'input.mp4',
     #     'audio.wav',
     #     segments,

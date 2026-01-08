@@ -82,7 +82,8 @@ class VideoTimelineSyncProcessor:
         slowdown_start_index: int = 1,
         use_gpu: bool = False,
         gpu_id: int = 0,
-        use_dynamic_slowdown_limit: bool = True
+        use_dynamic_slowdown_limit: bool = True,
+        enable_grouping: bool = True
     ):
         """
         初始化处理器
@@ -103,6 +104,9 @@ class VideoTimelineSyncProcessor:
             use_dynamic_slowdown_limit: 是否使用动态慢放限制（默认True）
                 - True: 根据片段时长动态调整最大慢放比例
                 - False: 使用固定的max_slowdown_ratio
+            enable_grouping: 是否启用分段合并（默认True）
+                - True: 将慢放比例相近的连续字幕合并成一个分段（提高效率）
+                - False: 每条字幕单独处理（提高时间轴准确度）
         """
         self.original_video_path = Path(original_video_path)
         self.original_srt_path = Path(original_srt_path)
@@ -122,6 +126,7 @@ class VideoTimelineSyncProcessor:
         self._gpu_available = self._check_gpu_availability()
         
         # 分段批量调整参数
+        self.enable_grouping = enable_grouping  # 是否启用分组合并
         self.ratio_threshold = 0.01  # 调整比例差异阈值（1%）- 提高精度
         self.ratio_tolerance = 0.05  # 组内比例容差（5%）- 更严格的合并条件
         
@@ -1480,6 +1485,8 @@ class VideoTimelineSyncProcessor:
         2. 调整比例相近的连续字幕合并为一组（统一调整）
         3. 调整比例差异大的字幕单独成组
         
+        如果 enable_grouping=False，每条字幕单独成组
+        
         Args:
             timeline_diffs: 时间轴差异列表
             
@@ -1487,12 +1494,26 @@ class VideoTimelineSyncProcessor:
             分段组列表
         """
         print("\n" + "="*60)
-        print("📦 分析并合并相近片段")
+        if self.enable_grouping:
+            print("📦 分析并合并相近片段")
+        else:
+            print("📦 创建分段（每条字幕单独处理）")
         print("="*60)
         
         if not timeline_diffs:
             return []
         
+        # 如果禁用分组，每条字幕单独成组
+        if not self.enable_grouping:
+            groups = []
+            for i, diff in enumerate(timeline_diffs):
+                group = self._create_segment_group(i, i, [diff])
+                groups.append(group)
+            
+            print(f"\n📊 分段结果: {len(timeline_diffs)} 条字幕 → {len(groups)} 个分段（禁用分组）")
+            return groups
+        
+        # 启用分组：原有逻辑
         groups = []
         current_group_diffs = [timeline_diffs[0]]
         current_group_start = 0
@@ -1691,6 +1712,16 @@ class VideoTimelineSyncProcessor:
             subtitle_count = group.end_index - group.start_index + 1
             print(f"\n分段{i+1}/{len(groups)}: 字幕{group.start_index+1}-{group.end_index+1} ({subtitle_count}条)")
             print(f"  切割: {group.original_start_sec:.2f}s - {group.original_end_sec:.2f}s")
+            
+            # 显示分段组包含的每条字幕详情
+            if subtitle_count > 1:
+                print(f"  📋 包含的字幕:")
+                for j, diff in enumerate(group.diffs):
+                    print(f"     字幕{diff.index}: {diff.original_entry.start_sec:.3f}s-{diff.original_entry.end_sec:.3f}s "
+                          f"(时长{diff.original_entry.duration_ms/1000:.3f}s, 比例{diff.slowdown_ratio:.3f}x)")
+            else:
+                diff = group.diffs[0]
+                print(f"  📋 字幕{diff.index}: 时长{diff.original_entry.duration_ms/1000:.3f}s, 比例{diff.slowdown_ratio:.3f}x")
             
             cmd = [
                 'ffmpeg', '-y',
