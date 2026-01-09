@@ -836,7 +836,7 @@ class VideoTimelineSyncProcessor:
             first_subtitle_start = timeline_diffs[0].original_entry.start_sec
             
             # 如果第一个字幕不是从0秒开始，切割开头的间隔
-            if first_subtitle_start > 0.1:
+            if first_subtitle_start > 0.01:
                 segment_counter += 1
                 initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
                 
@@ -896,8 +896,8 @@ class VideoTimelineSyncProcessor:
                 gap_end = timeline_diffs[i + 1].original_entry.start_sec
                 gap_duration = gap_end - gap_start
                 
-                # 只有当间隔大于0.1秒时才切割
-                if gap_duration > 0.1:
+                # 只有当间隔大于0.01秒时才切割（10毫秒）
+                if gap_duration > 0.01:
                     segment_counter += 1
                     gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
                     
@@ -928,8 +928,8 @@ class VideoTimelineSyncProcessor:
             last_subtitle_end = timeline_diffs[-1].original_entry.end_sec
             tail_gap_duration = video_duration - last_subtitle_end
             
-            # 只有当尾部间隔大于0.1秒时才切割
-            if tail_gap_duration > 0.1:
+            # 只有当尾部间隔大于0.01秒时才切割（10毫秒）
+            if tail_gap_duration > 0.01:
                 segment_counter += 1
                 tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
                 
@@ -1256,9 +1256,9 @@ class VideoTimelineSyncProcessor:
             if not self.concatenate_segments(processed_segments, temp_video):
                 raise Exception("视频拼接失败")
             
-            # **关键步骤3.5**：校准视频时长，确保与音频对齐
+            # **关键步骤3.5**：全局时长校准（修正累积误差）
             print("\n" + "="*60)
-            print("🎯 校准视频时长")
+            print("🎯 全局时长校准")
             print("="*60)
             
             concat_video_duration = self._get_video_duration_from_file(temp_video)
@@ -1268,12 +1268,19 @@ class VideoTimelineSyncProcessor:
             duration_diff = audio_duration - concat_video_duration
             print(f"时长差异: {duration_diff:+.2f}秒")
             
-            if abs(duration_diff) > 0.1:  # 降低阈值到0.1秒
-                print(f"\n⚠️ 时长差异（{abs(duration_diff):.2f}秒），进行全局校准")
+            # 全局校准：修正拼接过程中的累积误差
+            # 阈值设为0.1秒，确保精确同步
+            if abs(duration_diff) > 0.1:
+                print(f"\n⚠️ 时长差异（{abs(duration_diff):.2f}秒）超过阈值，进行全局校准")
                 
                 # 计算全局校准比例
                 calibration_ratio = audio_duration / concat_video_duration
                 print(f"全局校准比例: {calibration_ratio:.4f}x")
+                
+                if duration_diff > 0:
+                    print(f"   视频比音频短 {duration_diff:.2f}秒 → 全局慢放 {calibration_ratio:.4f}x")
+                else:
+                    print(f"   视频比音频长 {abs(duration_diff):.2f}秒 → 全局加速 {calibration_ratio:.4f}x")
                 
                 # 对拼接后的视频进行全局校准
                 calibrated_video = self.temp_dir / "calibrated.mp4"
@@ -1282,14 +1289,19 @@ class VideoTimelineSyncProcessor:
                     
                     # 验证校准后的时长
                     final_duration = self._get_video_duration_from_file(temp_video)
+                    final_diff = audio_duration - final_duration
+                    
                     print(f"✅ 全局校准完成")
                     print(f"   校准后视频时长: {final_duration:.2f}秒")
                     print(f"   目标音频时长: {audio_duration:.2f}秒")
-                    print(f"   最终差异: {abs(final_duration - audio_duration):.3f}秒")
+                    print(f"   最终差异: {final_diff:+.3f}秒")
+                    
+                    if abs(final_diff) < 0.1:
+                        print(f"   ✅ 时长精确匹配（误差 < 0.1秒）")
                 else:
                     print(f"⚠️ 全局校准失败，使用原始拼接视频")
             else:
-                print(f"✅ 时长差异在可接受范围内（{abs(duration_diff):.2f}秒）")
+                print(f"✅ 时长差异在可接受范围内（{abs(duration_diff):.2f}秒 < 0.1秒）")
             
             # 步骤4：替换音轨和添加字幕
             final_output = self.output_dir / "synced_video.mp4"
@@ -1350,7 +1362,7 @@ class VideoTimelineSyncProcessor:
         # 0. 切割第一个字幕之前的初始间隔（如果存在）
         if len(timeline_diffs) > 0:
             first_start = timeline_diffs[0].original_entry.start_sec
-            if first_start > 0.1:
+            if first_start > 0.01:
                 segment_counter += 1
                 initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
                 
@@ -1412,7 +1424,7 @@ class VideoTimelineSyncProcessor:
                 gap_end = timeline_diffs[i + 1].original_entry.start_sec
                 gap_duration = gap_end - gap_start
                 
-                if gap_duration > 0.1:
+                if gap_duration > 0.01:
                     segment_counter += 1
                     gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
                     
@@ -1442,7 +1454,7 @@ class VideoTimelineSyncProcessor:
             last_end = timeline_diffs[-1].original_entry.end_sec
             tail_gap_duration = video_duration - last_end
             
-            if tail_gap_duration > 0.1:
+            if tail_gap_duration > 0.01:
                 segment_counter += 1
                 tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
                 
@@ -1655,7 +1667,7 @@ class VideoTimelineSyncProcessor:
         # 处理开头间隔
         if len(groups) > 0:
             first_start = groups[0].original_start_sec
-            if first_start > 0.1:
+            if first_start > 0.01:
                 segment_counter += 1
                 initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
                 
@@ -1781,7 +1793,7 @@ class VideoTimelineSyncProcessor:
                 gap_end = groups[i + 1].original_start_sec
                 gap_duration = gap_end - gap_start
                 
-                if gap_duration > 0.1:
+                if gap_duration > 0.01:
                     segment_counter += 1
                     gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
                     
@@ -1852,7 +1864,7 @@ class VideoTimelineSyncProcessor:
             last_end = groups[-1].original_end_sec
             tail_gap_duration = video_duration - last_end
             
-            if tail_gap_duration > 0.1:
+            if tail_gap_duration > 0.01:
                 segment_counter += 1
                 tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
                 
@@ -2088,7 +2100,7 @@ class VideoTimelineSyncProcessor:
         # 0. 切割第一个字幕之前的初始间隔（如果存在）
         if len(timeline_diffs) > 0:
             first_start = timeline_diffs[0].updated_entry.start_sec
-            if first_start > 0.1:
+            if first_start > 0.01:
                 segment_counter += 1
                 initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
                 
@@ -2149,7 +2161,7 @@ class VideoTimelineSyncProcessor:
                 gap_end = timeline_diffs[i + 1].updated_entry.start_sec
                 gap_duration = gap_end - gap_start
                 
-                if gap_duration > 0.1:
+                if gap_duration > 0.01:
                     segment_counter += 1
                     gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
                     
@@ -2179,7 +2191,7 @@ class VideoTimelineSyncProcessor:
             last_end = timeline_diffs[-1].updated_entry.end_sec
             tail_gap_duration = video_duration - last_end
             
-            if tail_gap_duration > 0.1:
+            if tail_gap_duration > 0.01:
                 segment_counter += 1
                 tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
                 
@@ -2242,7 +2254,7 @@ class VideoTimelineSyncProcessor:
             # ✅ 调整时间轴：慢放后的时间 = 原始时间 × 全局比例
             first_start_slowed = first_start * global_ratio
             
-            if first_start_slowed > 0.1:
+            if first_start_slowed > 0.01:
                 segment_counter += 1
                 initial_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_initial_gap.mp4"
                 
@@ -2312,7 +2324,7 @@ class VideoTimelineSyncProcessor:
                 gap_end_slowed = gap_end * global_ratio
                 gap_duration_slowed = gap_end_slowed - gap_start_slowed
                 
-                if gap_duration_slowed > 0.1:
+                if gap_duration_slowed > 0.01:
                     segment_counter += 1
                     gap_output = self.segments_dir / f"segment_{segment_counter:04d}_gap.mp4"
                     
@@ -2344,7 +2356,7 @@ class VideoTimelineSyncProcessor:
             last_end_slowed = last_end * global_ratio
             tail_gap_duration = slowed_video_duration - last_end_slowed
             
-            if tail_gap_duration > 0.1:
+            if tail_gap_duration > 0.01:
                 segment_counter += 1
                 tail_gap_output = self.segments_dir / f"segment_{segment_counter:04d}_tail_gap.mp4"
                 

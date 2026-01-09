@@ -766,7 +766,7 @@ def create_segments_from_timeline_diffs(
     # 1. 添加开头间隔（如果存在）
     if include_gaps:
         first_start = timeline_diffs[0].original_entry.start_sec
-        if first_start > 0.1:  # 大于0.1秒才添加
+        if first_start > 0.01:  # 大于0.01秒才添加（10毫秒）
             segments.append(VideoSegment(
                 start_sec=0.0,
                 end_sec=first_start,
@@ -794,7 +794,7 @@ def create_segments_from_timeline_diffs(
             gap_end = timeline_diffs[i + 1].original_entry.start_sec
             gap_duration = gap_end - gap_start
             
-            if gap_duration > 0.1:  # 大于0.1秒才添加
+            if gap_duration > 0.01:  # 大于0.01秒才添加（10毫秒）
                 segments.append(VideoSegment(
                     start_sec=gap_start,
                     end_sec=gap_end,
@@ -808,7 +808,7 @@ def create_segments_from_timeline_diffs(
         last_end = timeline_diffs[-1].original_entry.end_sec
         tail_gap_duration = original_video_duration - last_end
         
-        if tail_gap_duration > 0.1:  # 大于0.1秒才添加
+        if tail_gap_duration > 0.01:  # 大于0.01秒才添加（10毫秒）
             segments.append(VideoSegment(
                 start_sec=last_end,
                 end_sec=original_video_duration,
