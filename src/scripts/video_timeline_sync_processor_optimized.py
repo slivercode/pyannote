@@ -107,8 +107,9 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         构建FFmpeg复杂滤镜链
         
-        这是性能优化的核心：将所有片段的切割、慢放、拼接操作
-        合并到一个滤镜链中，避免多次编解码
+        使用trim+setpts的正确语法：
+        - trim: 切割视频片段
+        - setpts=(PTS-STARTPTS)*ratio: 调整播放速度
         
         Args:
             segments: 视频片段列表
@@ -124,31 +125,26 @@ class OptimizedVideoTimelineSyncProcessor:
         
         for i, seg in enumerate(segments):
             label = f"v{i}"
+            start = seg.start_sec
+            end = seg.end_sec
             
-            # 基础滤镜：trim（切割）+ setpts（调整时间戳）
-            # 关键：必须先重置时间戳(PTS-STARTPTS)，再应用慢放比例
-            # 注意：完全信任seg.needs_slowdown的判断，不再额外检查阈值
             if seg.needs_slowdown:
                 # 需要慢放
                 if enable_interpolation:
-                    # 带帧插值的慢放（更平滑但更慢）
+                    # 带帧插值的慢放
                     filter_parts.append(
-                        f"[0:v]trim=start={seg.start_sec}:end={seg.end_sec},"
-                        f"setpts=(PTS-STARTPTS)*{seg.slowdown_ratio},"
-                        f"minterpolate='fps=60:mi_mode=mci'[{label}]"
+                        f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{seg.slowdown_ratio},"
+                        f"minterpolate=fps=60:mi_mode=mci[{label}]"
                     )
                 else:
-                    # 简单慢放（快速）
-                    # 正确公式：先重置时间戳，再乘以慢放比例
+                    # 简单慢放
                     filter_parts.append(
-                        f"[0:v]trim=start={seg.start_sec}:end={seg.end_sec},"
-                        f"setpts=(PTS-STARTPTS)*{seg.slowdown_ratio}[{label}]"
+                        f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{seg.slowdown_ratio}[{label}]"
                     )
             else:
-                # 不需要慢放，直接切割并重置时间戳
+                # 不需要慢放
                 filter_parts.append(
-                    f"[0:v]trim=start={seg.start_sec}:end={seg.end_sec},"
-                    f"setpts=PTS-STARTPTS[{label}]"
+                    f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[{label}]"
                 )
             
             stream_labels.append(f"[{label}]")
@@ -518,6 +514,8 @@ class OptimizedVideoTimelineSyncProcessor:
         Returns:
             输出文件路径
         """
+        import tempfile
+        
         # 1. 构建复杂滤镜链
         if progress_callback:
             progress_callback(10, "构建滤镜链")
@@ -527,56 +525,160 @@ class OptimizedVideoTimelineSyncProcessor:
             enable_interpolation=self.enable_frame_interpolation
         )
         
-        # 2. 构建FFmpeg命令
+        # 2. 构建FFmpeg命令（先生成无音频的视频）
         if progress_callback:
             progress_callback(20, "准备FFmpeg命令")
         
-        cmd = self._build_ffmpeg_command(
-            input_video_path,
-            input_audio_path,
-            filter_chain,
-            output_path
-        )
+        # 创建临时视频文件（无音频）
+        temp_video = Path(tempfile.gettempdir()) / f"temp_concat_{id(self)}.mp4"
         
-        # 3. 执行FFmpeg
+        cmd = [self.ffmpeg_path, '-y']
+        
+        # GPU加速配置
+        if self.use_gpu:
+            cmd.extend([
+                '-hwaccel', 'cuda',
+                '-hwaccel_output_format', 'cuda',
+                '-hwaccel_device', '0'
+            ])
+        
+        # 输入文件
+        cmd.extend(['-i', input_video_path])
+        
+        # 复杂滤镜链
+        cmd.extend(['-filter_complex', filter_chain])
+        
+        # 输出映射（只输出视频）
+        cmd.extend(['-map', '[outv]'])
+        
+        # 视频编码设置
+        if self.use_gpu:
+            cmd.extend([
+                '-c:v', 'h264_nvenc',
+                '-preset', self.quality_preset,
+                '-b:v', '5M'
+            ])
+        else:
+            cmd.extend([
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '23'
+            ])
+        
+        # 输出文件
+        cmd.append(str(temp_video))
+        
+        # 3. 执行FFmpeg拼接
         if progress_callback:
             progress_callback(30, "执行FFmpeg处理")
         
-        print(f"\n⚙️  执行FFmpeg...")
-        print(f"   命令预览: {' '.join(cmd[:15])}...")
-        print(f"   ⚠️  这可能需要几分钟，请耐心等待...")
+        print(f"\n⚙️  执行FFmpeg拼接...")
         
         try:
-            # 执行FFmpeg并捕获输出
-            process = subprocess.Popen(
+            subprocess.run(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
+                capture_output=True,
+                check=True,
                 encoding='utf-8',
                 errors='ignore'
             )
             
-            # 实时读取进度
-            for line in process.stderr:
-                # FFmpeg的进度信息在stderr中
-                if 'time=' in line:
-                    # 解析时间进度
-                    try:
-                        time_str = line.split('time=')[1].split()[0]
-                        # 可以根据总时长计算百分比
-                        if progress_callback:
-                            # 简单的进度估算：30-90%
-                            progress_callback(30 + int(60 * 0.5), f"处理中: {time_str}")
-                    except:
-                        pass
+            # 4. 全局时长校准
+            if progress_callback:
+                progress_callback(70, "全局时长校准")
             
-            # 等待完成
-            return_code = process.wait()
+            print("\n" + "="*60)
+            print("🎯 全局时长校准")
+            print("="*60)
             
-            if return_code != 0:
-                stderr = process.stderr.read() if process.stderr else ""
-                raise subprocess.CalledProcessError(return_code, cmd, stderr=stderr)
+            # 获取音频时长
+            audio_duration = self._get_video_duration(input_audio_path)
+            concat_video_duration = self._get_video_duration(str(temp_video))
+            
+            print(f"拼接后视频时长: {concat_video_duration:.2f}秒")
+            print(f"目标音频时长: {audio_duration:.2f}秒")
+            
+            duration_diff = audio_duration - concat_video_duration
+            print(f"时长差异: {duration_diff:+.2f}秒")
+            
+            # 全局校准：修正拼接过程中的累积误差
+            # 阈值设为0.1秒，确保精确同步
+            if abs(duration_diff) > 0.1:
+                print(f"\n⚠️  时长差异（{abs(duration_diff):.2f}秒）超过阈值，进行全局校准")
+                
+                # 计算全局校准比例
+                calibration_ratio = audio_duration / concat_video_duration
+                print(f"全局校准比例: {calibration_ratio:.4f}x")
+                
+                if duration_diff > 0:
+                    print(f"   视频比音频短 {duration_diff:.2f}秒 → 全局慢放 {calibration_ratio:.4f}x")
+                else:
+                    print(f"   视频比音频长 {abs(duration_diff):.2f}秒 → 全局加速 {calibration_ratio:.4f}x")
+                
+                # 对拼接后的视频进行全局校准
+                calibrated_video = Path(tempfile.gettempdir()) / f"calibrated_{id(self)}.mp4"
+                if self._calibrate_video_duration(str(temp_video), str(calibrated_video), calibration_ratio):
+                    temp_video = calibrated_video
+                    
+                    # 验证校准后的时长
+                    final_duration = self._get_video_duration(str(temp_video))
+                    final_diff = audio_duration - final_duration
+                    
+                    print(f"✅ 全局校准完成")
+                    print(f"   校准后视频时长: {final_duration:.2f}秒")
+                    print(f"   目标音频时长: {audio_duration:.2f}秒")
+                    print(f"   最终差异: {final_diff:+.3f}秒")
+                    
+                    if abs(final_diff) < 0.1:
+                        print(f"   ✅ 时长精确匹配（误差 < 0.1秒）")
+                else:
+                    print(f"⚠️  全局校准失败，使用原始拼接视频")
+            else:
+                print(f"✅ 时长差异在可接受范围内（{abs(duration_diff):.2f}秒 < 0.1秒）")
+            
+            # 5. 添加音频
+            if progress_callback:
+                progress_callback(85, "添加音频")
+            
+            print("\n⚙️  添加音频...")
+            
+            cmd_audio = [self.ffmpeg_path, '-y']
+            
+            # 输入视频和音频
+            cmd_audio.extend([
+                '-i', str(temp_video),
+                '-i', input_audio_path
+            ])
+            
+            # 映射视频和音频
+            cmd_audio.extend([
+                '-map', '0:v',
+                '-map', '1:a'
+            ])
+            
+            # 编码设置
+            cmd_audio.extend([
+                '-c:v', 'copy',  # 直接复制视频
+                '-c:a', 'aac',
+                '-b:a', '192k'
+            ])
+            
+            # 其他设置
+            cmd_audio.extend([
+                '-movflags', '+faststart',
+                '-max_muxing_queue_size', '9999'
+            ])
+            
+            # 输出文件
+            cmd_audio.append(output_path)
+            
+            subprocess.run(
+                cmd_audio,
+                capture_output=True,
+                check=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
             
             if progress_callback:
                 progress_callback(100, "处理完成")
@@ -596,11 +698,21 @@ class OptimizedVideoTimelineSyncProcessor:
             print(f"\n❌ FFmpeg执行失败:")
             print(f"   错误码: {e.returncode}")
             if e.stderr:
-                print(f"   错误信息: {e.stderr[-1000:]}")  # 最后1000字符
+                print(f"   错误信息: {e.stderr[-1000:]}")
             raise
         except Exception as e:
             print(f"\n❌ 处理失败: {e}")
             raise
+        finally:
+            # 清理临时文件
+            try:
+                if temp_video.exists():
+                    temp_video.unlink()
+                calibrated_video = Path(tempfile.gettempdir()) / f"calibrated_{id(self)}.mp4"
+                if calibrated_video.exists():
+                    calibrated_video.unlink()
+            except:
+                pass
     
     def _build_ffmpeg_command(
         self,
@@ -680,6 +792,126 @@ class OptimizedVideoTimelineSyncProcessor:
         cmd.append(output_path)
         
         return cmd
+    
+    def _get_video_duration(self, video_path: str) -> float:
+        """
+        获取视频时长
+        
+        Args:
+            video_path: 视频文件路径
+            
+        Returns:
+            视频时长（秒）
+        """
+        cmd = [
+            self.ffmpeg_path,
+            '-i', video_path,
+            '-f', 'null',
+            '-'
+        ]
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            
+            # 从stderr中解析时长
+            for line in result.stderr.split('\n'):
+                if 'Duration:' in line:
+                    # 格式: Duration: 00:05:18.23, start: 0.000000, bitrate: 1234 kb/s
+                    duration_str = line.split('Duration:')[1].split(',')[0].strip()
+                    # 解析 HH:MM:SS.ms
+                    parts = duration_str.split(':')
+                    hours = int(parts[0])
+                    minutes = int(parts[1])
+                    seconds = float(parts[2])
+                    return hours * 3600 + minutes * 60 + seconds
+            
+            return 0.0
+        except Exception as e:
+            print(f"   ⚠️  获取视频时长失败: {e}")
+            return 0.0
+    
+    def _calibrate_video_duration(
+        self,
+        input_video: str,
+        output_video: str,
+        ratio: float
+    ) -> bool:
+        """
+        对视频进行全局时长校准
+        
+        Args:
+            input_video: 输入视频路径
+            output_video: 输出视频路径
+            ratio: 校准比例（目标时长/当前时长）
+            
+        Returns:
+            是否成功
+        """
+        print(f"   应用全局校准: {ratio:.4f}x")
+        
+        cmd = [self.ffmpeg_path, '-y']
+        
+        # GPU加速配置
+        if self.use_gpu:
+            cmd.extend([
+                '-hwaccel', 'cuda',
+                '-hwaccel_output_format', 'cuda',
+                '-hwaccel_device', '0'
+            ])
+        
+        # 输入文件
+        cmd.extend(['-i', input_video])
+        
+        # 视频滤镜
+        if self.use_gpu:
+            # GPU模式
+            cmd.extend([
+                '-vf', f'hwdownload,format=nv12,setpts={ratio}*PTS,hwupload'
+            ])
+        else:
+            # CPU模式
+            cmd.extend([
+                '-vf', f'setpts={ratio}*PTS'
+            ])
+        
+        # 移除音频
+        cmd.append('-an')
+        
+        # 编码器参数
+        if self.use_gpu:
+            cmd.extend([
+                '-c:v', 'h264_nvenc',
+                '-preset', self.quality_preset,
+                '-b:v', '5M'
+            ])
+        else:
+            cmd.extend([
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '23'
+            ])
+        
+        # 输出文件
+        cmd.append(output_video)
+        
+        try:
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                check=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"   ❌ 全局校准失败: {e}")
+            return False
     
     def estimate_processing_time(
         self,
