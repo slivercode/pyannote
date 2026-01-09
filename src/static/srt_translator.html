@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRT字幕翻译</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <style>
+        .upload-zone {
+            border: 2px dashed #d1d5db;
+            transition: all 0.3s ease;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div id="app" class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- 页面标题 -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                <i class="ri-translate-2 text-blue-500"></i> SRT字幕翻译
+            </h1>
+            <p class="text-gray-600">上传SRT字幕文件，使用AI模型翻译到目标语言</p>
+            <p class="text-sm text-gray-500 mt-1">支持阿里云通义千问、OpenAI、DeepSeek、Ollama</p>
+        </div>
+
+        <!-- 主要内容区 -->
+        <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <!-- 文件上传区 -->
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                    <i class="ri-file-text-line"></i> SRT文件（上传或输入路径）
+                </label>
+                
+                <!-- 输入方式切换 -->
+                <div class="flex gap-4 mb-3">
+                    <label class="flex items-center">
+                        <input type="radio" name="inputMode" value="upload" checked onchange="toggleInputMode('upload')" class="mr-2">
+                        <span class="text-sm">上传文件</span>
+                    </label>
+                    <label class="flex items-center">
+                        <input type="radio" name="inputMode" value="path" onchange="toggleInputMode('path')" class="mr-2">
+                        <span class="text-sm">输入路径</span>
+                    </label>
+                </div>
+                
+                <!-- 上传区域 -->
+                <div id="uploadSection">
+                    <div 
+                        id="uploadZone" 
+                        class="upload-zone rounded-lg p-8 text-center cursor-pointer"
+                        onclick="document.getElementById('srtFile').click()"
+                    >
+                        <input type="file" id="srtFile" accept=".srt" class="hidden" onchange="handleFileSelect(event)">
+                        <div id="uploadPlaceholder">
+                            <i class="ri-upload-cloud-2-line text-4xl text-gray-400 mb-2"></i>
+                            <p class="text-gray-500">点击或拖拽SRT文件到此处</p>
+                            <p class="text-sm text-gray-400 mt-1">支持 .srt 格式</p>
+                        </div>
+                        <div id="fileInfo" class="hidden">
+                            <i class="ri-file-text-fill text-4xl text-blue-500 mb-2"></i>
+                            <p class="text-gray-700 font-medium" id="fileName"></p>
+                            <p class="text-sm text-gray-500" id="fileSize"></p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 路径输入区域 -->
+                <div id="pathSection" class="hidden">
+                    <input 
+                        type="text" 
+                        id="srtPath" 
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="输入SRT文件的绝对路径，如：D:\video\subtitles.srt"
+                    >
+                    <p class="text-xs text-gray-500 mt-1">
+                        <i class="ri-information-line"></i> 直接输入本地文件路径，无需上传
+                    </p>
+                </div>
+            </div>
+
+            <!-- 配置区 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <!-- 目标语言 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="ri-global-line"></i> 目标语言
+                    </label>
+                    <select id="targetLang" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                        <option value="ja">日本語</option>
+                        <option value="ko">한국어</option>
+                        <option value="fr">Français</option>
+                        <option value="de">Deutsch</option>
+                        <option value="es">Español</option>
+                        <option value="ru">Русский</option>
+                        <option value="pt">Português</option>
+                        <option value="it">Italiano</option>
+                        <option value="th">ไทย</option>
+                        <option value="vi">Tiếng Việt</option>
+                    </select>
+                </div>
+
+                <!-- 模型提供商选择 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="ri-robot-line"></i> 模型提供商
+                    </label>
+                    <select id="provider" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" onchange="onProviderChange()">
+                        <option value="qwen">阿里云通义千问</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="ollama" selected>Ollama</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Ollama配置区 -->
+            <div id="ollamaSection" class="mb-6">
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-blue-800 mb-3">
+                        <i class="ri-server-line"></i> Ollama服务配置
+                    </h4>
+                    
+                    <!-- 服务器地址 -->
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">服务器地址</label>
+                            <input 
+                                type="text" 
+                                id="ollamaHost" 
+                                value="192.168.110.204"
+                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                placeholder="192.168.110.204"
+                            >
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-600 mb-1">端口</label>
+                            <input 
+                                type="number" 
+                                id="ollamaPort" 
+                                value="11435"
+                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                placeholder="11435"
+                            >
+                        </div>
+                    </div>
+                    
+                    <!-- 模型名称 -->
+                    <div class="mb-3">
+                        <label class="block text-xs text-gray-600 mb-1">模型名称</label>
+                        <div class="flex gap-2">
+                            <input 
+                                type="text" 
+                                id="ollamaModel" 
+                                value="qwen2.5"
+                                class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                placeholder="输入模型名称，如 qwen2.5、llama3、mistral"
+                            >
+                            <button 
+                                onclick="refreshOllamaModels()" 
+                                class="px-3 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                            >
+                                <i class="ri-refresh-line"></i> 获取列表
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 已安装模型列表 -->
+                    <div id="ollamaModelList" class="hidden">
+                        <label class="block text-xs text-gray-600 mb-1">已安装的模型（点击选择）</label>
+                        <div id="ollamaModelButtons" class="flex flex-wrap gap-2">
+                        </div>
+                    </div>
+                    
+                    <!-- 状态显示 -->
+                    <div id="ollamaStatus" class="mt-2 text-xs text-gray-500">
+                        <i class="ri-information-line"></i> 点击"获取列表"检测Ollama服务
+                    </div>
+                </div>
+            </div>
+
+            <!-- 云端API配置区 -->
+            <div id="cloudApiSection" class="mb-6 hidden">
+                <div class="space-y-4">
+                    <!-- 模型选择 -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            <i class="ri-cpu-line"></i> 模型
+                        </label>
+                        <select id="cloudModel" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </select>
+                    </div>
+                    
+                    <!-- API密钥 -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            <i class="ri-key-line"></i> API密钥
+                        </label>
+                        <input 
+                            type="password" 
+                            id="apiKey" 
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="输入API密钥"
+                        >
+                        <p class="text-xs text-gray-500 mt-1">密钥仅用于本次翻译，不会被保存</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 高级配置（折叠） -->
+            <details class="mb-6">
+                <summary class="cursor-pointer text-sm font-medium text-gray-700 mb-2">
+                    <i class="ri-settings-3-line"></i> 高级配置
+                </summary>
+                <div class="mt-4 p-4 bg-gray-50 rounded-lg space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">API地址（自动填充）</label>
+                        <input 
+                            type="text" 
+                            id="apiUrl" 
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            value="http://192.168.110.204:11435/api/chat"
+                        >
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">批量大小</label>
+                        <input 
+                            type="number" 
+                            id="batchSize" 
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            value="5"
+                            min="1"
+                            max="50"
+                        >
+                        <p class="text-xs text-gray-500 mt-1">每次翻译的字幕条数，Ollama建议5-10</p>
+                    </div>
+                </div>
+            </details>
+
+            <!-- 开始翻译按钮 -->
+            <button 
+                id="startBtn"
+                onclick="startTranslate()"
+                class="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-6 rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+                <i class="ri-translate"></i> 开始翻译
+            </button>
+        </div>
+
+        <!-- 进度区 -->
+        <div id="progressSection" class="bg-white rounded-xl shadow-lg p-6 mb-6 hidden">
+            <h3 class="text-lg font-medium text-gray-800 mb-4">
+                <i class="ri-loader-4-line animate-spin"></i> 翻译进度
+            </h3>
+            <div class="mb-4">
+                <div class="flex justify-between text-sm text-gray-600 mb-1">
+                    <span id="progressText">正在翻译...</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-3">
+                    <div id="progressBar" class="progress-bar bg-blue-500 h-3 rounded-full" style="width: 0%"></div>
+                </div>
+            </div>
+            <p id="progressMessage" class="text-sm text-gray-500"></p>
+        </div>
+
+        <!-- 结果区 -->
+        <div id="resultSection" class="bg-white rounded-xl shadow-lg p-6 hidden">
+            <h3 class="text-lg font-medium text-gray-800 mb-4">
+                <i class="ri-check-double-line text-green-500"></i> 翻译完成
+            </h3>
+            <div class="flex items-center justify-between p-4 bg-green-50 rounded-lg">
+                <div class="flex items-center">
+                    <i class="ri-file-text-fill text-2xl text-green-500 mr-3"></i>
+                    <div>
+                        <p class="font-medium text-gray-800" id="resultFileName"></p>
+                        <p class="text-sm text-gray-500">翻译后的字幕文件</p>
+                    </div>
+                </div>
+                <button 
+                    id="downloadBtn"
+                    onclick="downloadResult()"
+                    class="bg-green-500 hover:bg-green-600 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                >
+                    <i class="ri-download-line"></i> 下载
+                </button>
+            </div>
+        </div>
+
+        <!-- 错误提示 -->
+        <div id="errorSection" class="bg-red-50 border border-red-200 rounded-xl p-6 hidden">
+            <h3 class="text-lg font-medium text-red-800 mb-2">
+                <i class="ri-error-warning-line"></i> 翻译失败
+            </h3>
+            <p id="errorMessage" class="text-red-600"></p>
+        </div>
+
+        <!-- 返回首页 -->
+        <div class="text-center mt-6">
+            <a href="/" class="text-blue-500 hover:text-blue-700">
+                <i class="ri-arrow-left-line"></i> 返回首页
+            </a>
+        </div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+        let currentTaskId = null;
+        let pollInterval = null;
+        let inputMode = 'upload';
+
+        function toggleInputMode(mode) {
+            inputMode = mode;
+            document.getElementById('uploadSection').classList.toggle('hidden', mode !== 'upload');
+            document.getElementById('pathSection').classList.toggle('hidden', mode !== 'path');
+        }
+
+        // 云端模型配置
+        const cloudModels = {
+            qwen: [
+                {id: 'qwen-plus', name: '通义千问Plus'},
+                {id: 'qwen-turbo', name: '通义千问Turbo'},
+                {id: 'qwen-max', name: '通义千问Max'}
+            ],
+            openai: [
+                {id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo'},
+                {id: 'gpt-4', name: 'GPT-4'},
+                {id: 'gpt-4o', name: 'GPT-4o'}
+            ],
+            deepseek: [
+                {id: 'deepseek-chat', name: 'DeepSeek Chat'}
+            ]
+        };
+
+        const apiUrls = {
+            qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+            openai: 'https://api.openai.com/v1/chat/completions',
+            deepseek: 'https://api.deepseek.com/v1/chat/completions'
+        };
+
+        // 拖拽上传
+        const uploadZone = document.getElementById('uploadZone');
+        
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].name.endsWith('.srt')) {
+                handleFile(files[0]);
+            }
+        });
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        }
+
+        function handleFile(file) {
+            selectedFile = file;
+            document.getElementById('uploadPlaceholder').classList.add('hidden');
+            document.getElementById('fileInfo').classList.remove('hidden');
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = formatFileSize(file.size);
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        function onProviderChange() {
+            const provider = document.getElementById('provider').value;
+            const ollamaSection = document.getElementById('ollamaSection');
+            const cloudApiSection = document.getElementById('cloudApiSection');
+            const apiUrlInput = document.getElementById('apiUrl');
+            const cloudModelSelect = document.getElementById('cloudModel');
+            
+            if (provider === 'ollama') {
+                ollamaSection.classList.remove('hidden');
+                cloudApiSection.classList.add('hidden');
+                updateOllamaApiUrl();
+            } else {
+                ollamaSection.classList.add('hidden');
+                cloudApiSection.classList.remove('hidden');
+                apiUrlInput.value = apiUrls[provider];
+                
+                // 更新模型列表
+                cloudModelSelect.innerHTML = cloudModels[provider].map(m => 
+                    `<option value="${m.id}">${m.name}</option>`
+                ).join('');
+            }
+        }
+
+        function updateOllamaApiUrl() {
+            const host = document.getElementById('ollamaHost').value || '192.168.110.204';
+            const port = document.getElementById('ollamaPort').value || '11435';
+            document.getElementById('apiUrl').value = `http://${host}:${port}/api/chat`;
+        }
+
+        // 监听Ollama配置变化
+        document.getElementById('ollamaHost').addEventListener('input', updateOllamaApiUrl);
+        document.getElementById('ollamaPort').addEventListener('input', updateOllamaApiUrl);
+
+        async function refreshOllamaModels() {
+            const host = document.getElementById('ollamaHost').value || '192.168.110.204';
+            const port = document.getElementById('ollamaPort').value || '11435';
+            const statusDiv = document.getElementById('ollamaStatus');
+            const modelListDiv = document.getElementById('ollamaModelList');
+            const buttonsDiv = document.getElementById('ollamaModelButtons');
+            
+            statusDiv.innerHTML = '<i class="ri-loader-4-line animate-spin"></i> 正在连接Ollama服务...';
+            modelListDiv.classList.add('hidden');
+            
+            try {
+                const response = await fetch(`/api/translate/ollama/models?host=${host}&port=${port}`);
+                const data = await response.json();
+                
+                if (data.success && data.models.length > 0) {
+                    statusDiv.innerHTML = `<span class="text-green-600"><i class="ri-check-line"></i> 已连接到 ${host}:${port}</span>`;
+                    modelListDiv.classList.remove('hidden');
+                    
+                    buttonsDiv.innerHTML = data.models.map(m => 
+                        `<button onclick="selectOllamaModel('${m.name}')" class="px-3 py-1 text-xs bg-white border border-gray-300 rounded-full hover:bg-blue-50 hover:border-blue-500">${m.name}</button>`
+                    ).join('');
+                } else {
+                    statusDiv.innerHTML = `<span class="text-red-600"><i class="ri-error-warning-line"></i> ${data.error || '未检测到已安装的模型'}</span>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<span class="text-red-600"><i class="ri-error-warning-line"></i> 无法连接到 ${host}:${port}</span>`;
+            }
+        }
+
+        function selectOllamaModel(modelName) {
+            document.getElementById('ollamaModel').value = modelName;
+        }
+
+        async function startTranslate() {
+            // 验证输入
+            const srtPath = document.getElementById('srtPath').value.trim();
+            
+            if (inputMode === 'upload' && !selectedFile) {
+                alert('请先选择SRT文件');
+                return;
+            }
+            if (inputMode === 'path' && !srtPath) {
+                alert('请输入SRT文件路径');
+                return;
+            }
+            
+            const provider = document.getElementById('provider').value;
+            const isOllama = provider === 'ollama';
+            
+            let model, apiKey, apiUrl;
+            
+            if (isOllama) {
+                model = 'ollama:' + document.getElementById('ollamaModel').value;
+                apiKey = '';
+                apiUrl = document.getElementById('apiUrl').value;
+            } else {
+                model = document.getElementById('cloudModel').value;
+                apiKey = document.getElementById('apiKey').value.trim();
+                apiUrl = document.getElementById('apiUrl').value;
+                
+                if (!apiKey) {
+                    alert('请输入API密钥');
+                    return;
+                }
+            }
+
+            const targetLang = document.getElementById('targetLang').value;
+            const batchSize = parseInt(document.getElementById('batchSize').value) || 5;
+
+            // 准备表单数据
+            const formData = new FormData();
+            
+            if (inputMode === 'upload' && selectedFile) {
+                formData.append('srt_file', selectedFile);
+            }
+            if (inputMode === 'path' && srtPath) {
+                formData.append('srt_path', srtPath);
+            }
+            
+            formData.append('target_lang', targetLang);
+            formData.append('api_key', apiKey);
+            formData.append('api_url', apiUrl);
+            formData.append('model', model);
+            formData.append('batch_size', batchSize);
+            formData.append('is_ollama', isOllama);
+
+            // 更新UI
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('progressSection').classList.remove('hidden');
+            document.getElementById('resultSection').classList.add('hidden');
+            document.getElementById('errorSection').classList.add('hidden');
+
+            try {
+                const response = await fetch('/api/translate/start', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || '启动翻译任务失败');
+                }
+
+                const result = await response.json();
+                currentTaskId = result.task_id;
+                
+                // 开始轮询进度
+                startPolling();
+
+            } catch (error) {
+                showError(error.message);
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+
+        function startPolling() {
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/translate/status/${currentTaskId}`);
+                    if (!response.ok) {
+                        throw new Error('获取任务状态失败');
+                    }
+
+                    const status = await response.json();
+                    updateProgress(status);
+
+                    if (status.status === 'completed') {
+                        stopPolling();
+                        showResult(status);
+                    } else if (status.status === 'failed') {
+                        stopPolling();
+                        showError(status.error || '翻译失败');
+                    }
+
+                } catch (error) {
+                    console.error('轮询错误:', error);
+                }
+            }, 1000);
+        }
+
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+
+        function updateProgress(status) {
+            const progress = status.progress || 0;
+            document.getElementById('progressBar').style.width = progress + '%';
+            document.getElementById('progressPercent').textContent = progress + '%';
+            document.getElementById('progressMessage').textContent = status.current_message || '';
+        }
+
+        function showResult(status) {
+            document.getElementById('progressSection').classList.add('hidden');
+            document.getElementById('resultSection').classList.remove('hidden');
+            document.getElementById('resultFileName').textContent = status.result_filename || 'translated.srt';
+            document.getElementById('startBtn').disabled = false;
+        }
+
+        function showError(message) {
+            document.getElementById('progressSection').classList.add('hidden');
+            document.getElementById('errorSection').classList.remove('hidden');
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('startBtn').disabled = false;
+        }
+
+        async function downloadResult() {
+            if (!currentTaskId) return;
+            window.location.href = `/api/translate/download/${currentTaskId}`;
+        }
+
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            onProviderChange();
+        });
+    </script>
+</body>
+</html>
