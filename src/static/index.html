@@ -54,6 +54,12 @@
         </div>
         <div
           class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goBackgroundAudio()"
+        >
+          <i class="fas fa-music mr-1"></i>环境声提取
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
           :class="{ 'text-primary border-b-2 border-primary': activeTab === 'task3' }"
           @click="activeTab = 'task3'"
         >
@@ -2728,6 +2734,10 @@
             window.location.href = "/static/mp4_to_wav.html";
           };
 
+          const goBackgroundAudio = () => {
+            window.location.href = "/static/background_audio.html";
+          };
+
           const openOCRExtractor = () => {
             window.open("/static/ocr_extractor.html", "_blank");
           };
@@ -3884,6 +3894,7 @@
             goOcrSrt,
             goSrtTranslator,
             goMp4ToWav,
+            goBackgroundAudio,
             openOCRExtractor,
             startTask,
             uploadedFile,

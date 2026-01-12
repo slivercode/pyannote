@@ -9,19 +9,6 @@ MP4/视频文件提取环境声音（背景音）
 1. Demucs (推荐，质量最好)
 2. Spleeter (快速)
 3. FFmpeg (简单滤波，质量较差)
-
-使用方法:
-  # 使用Demucs提取（推荐）
-  python mp4_to_wav.py --input video.mp4
-  
-  # 使用GPU加速
-  python mp4_to_wav.py --input video.mp4 --device cuda
-  
-  # 使用FFmpeg快速提取
-  python mp4_to_wav.py --input video.mp4 --engine ffmpeg
-  
-  # 批量提取
-  python mp4_to_wav.py --input-dir ./videos --output-dir ./background
 """
 
 import os
@@ -62,13 +49,14 @@ class BackgroundAudioExtractor:
         self.ffmpeg_path = ffmpeg_path or self._detect_ffmpeg()
         
         self._check_dependencies()
-
+    
     def _detect_ffmpeg(self) -> str:
         """自动检测FFmpeg路径"""
         import shutil
         import platform
         
         if platform.system() == "Windows":
+            # 尝试多个可能的路径
             possible_paths = [
                 Path("ffmpeg/bin/ffmpeg.exe"),
                 Path("../ffmpeg/bin/ffmpeg.exe"),
@@ -82,6 +70,7 @@ class BackgroundAudioExtractor:
         if system_ffmpeg:
             return system_ffmpeg
         
+        # 最后的备选方案
         return "ffmpeg"
     
     def _check_dependencies(self):
@@ -123,6 +112,7 @@ class BackgroundAudioExtractor:
         """
         print(f"PROGRESS:5%")
         
+        # 清理路径
         import unicodedata
         input_path = ''.join(c for c in input_path if unicodedata.category(c)[0] != 'C' or c in '\r\n\t').strip()
         output_dir = ''.join(c for c in output_dir if unicodedata.category(c)[0] != 'C' or c in '\r\n\t').strip()
@@ -150,6 +140,8 @@ class BackgroundAudioExtractor:
         print(f"PROGRESS:30%")
         
         # Step 2: 分离背景音
+        background_path = os.path.join(output_dir, f"{base_name}_background.wav")
+        
         if self.engine == "demucs":
             background_path = self._separate_with_demucs(temp_audio, output_dir, base_name)
         elif self.engine == "spleeter":
@@ -166,12 +158,18 @@ class BackgroundAudioExtractor:
         
         print(f"\n✅ 环境声音提取完成！")
         print(f"📁 输出文件: {background_path}")
-        print(f"result_wav_file: {background_path}")
+        print(f"result_background_audio: {background_path}")
         print(f"PROGRESS:100%")
         
         return background_path
-
-    def _extract_audio_from_video(self, video_path: str, output_path: str, sample_rate: int, channels: int):
+    
+    def _extract_audio_from_video(
+        self,
+        video_path: str,
+        output_path: str,
+        sample_rate: int,
+        channels: int
+    ):
         """从视频提取音频"""
         print(f"\n📹 Step 1: 提取视频音轨...")
         
@@ -196,143 +194,62 @@ class BackgroundAudioExtractor:
         print(f"✅ 音频提取完成: {output_path}")
 
     def _separate_with_demucs(self, audio_path: str, output_dir: str, base_name: str) -> str:
-        """使用Demucs分离背景音（推荐）- 使用Python API避免torchaudio保存问题"""
+        """使用Demucs分离背景音（推荐）"""
         print(f"\n🎵 Step 2: 使用 Demucs 分离背景音...")
         print(f"   模型: {self.model}")
         print(f"   设备: {self.device}")
         print(f"PROGRESS:40%")
         
         try:
-            import torch
-            import numpy as np
+            # 使用当前 Python 解释器，确保使用正确的虚拟环境
+            cmd = [
+                sys.executable, "-m", "demucs.separate",
+                "-n", self.model,
+                "-d", self.device,
+                "-o", output_dir,
+                "--two-stems", "vocals",  # 只分离人声和其他，效果更好
+                "--clip-mode", "rescale",  # 防止削波
+                audio_path
+            ]
             
-            # 尝试导入 soundfile 用于保存音频
-            try:
-                import soundfile as sf
-                use_soundfile = True
-                print(f"   使用 soundfile 保存音频")
-            except ImportError:
-                use_soundfile = False
-                print(f"   soundfile 未安装，将使用 FFmpeg 保存音频")
+            # 设置环境变量，将 FFmpeg 添加到 PATH
+            env = os.environ.copy()
+            ffmpeg_dir = Path(self.ffmpeg_path).parent
+            if ffmpeg_dir.exists():
+                env["PATH"] = str(ffmpeg_dir) + os.pathsep + env.get("PATH", "")
+                print(f"   FFmpeg路径: {ffmpeg_dir}")
             
-            # 使用 Demucs Python API
-            from demucs.pretrained import get_model
-            from demucs.apply import apply_model
+            print(f"   执行命令: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=env)
             
-            print(f"   加载模型: {self.model}")
-            model = get_model(self.model)
-            model.to(self.device)
-            model.eval()
-            
-            # 使用 soundfile 或 scipy 加载音频（避免 torchaudio）
-            print(f"   加载音频: {audio_path}")
-            try:
-                audio_data, sr = sf.read(audio_path, dtype='float32')
-                # 转换为 (channels, samples) 格式
-                if audio_data.ndim == 1:
-                    audio_data = np.stack([audio_data, audio_data])  # mono to stereo
-                else:
-                    audio_data = audio_data.T  # (samples, channels) -> (channels, samples)
-            except Exception as e:
-                print(f"   soundfile 加载失败，尝试 scipy: {e}")
-                from scipy.io import wavfile
-                sr, audio_data = wavfile.read(audio_path)
-                audio_data = audio_data.astype(np.float32) / 32768.0
-                if audio_data.ndim == 1:
-                    audio_data = np.stack([audio_data, audio_data])
-                else:
-                    audio_data = audio_data.T
-            
-            # 重采样到模型要求的采样率
-            model_sr = model.samplerate
-            if sr != model_sr:
-                print(f"   重采样: {sr}Hz -> {model_sr}Hz")
-                from scipy import signal
-                num_samples = int(len(audio_data[0]) * model_sr / sr)
-                audio_data = np.array([
-                    signal.resample(audio_data[0], num_samples),
-                    signal.resample(audio_data[1], num_samples)
-                ])
-                sr = model_sr
-            
-            # 转换为 torch tensor: (batch, channels, samples)
-            wav = torch.from_numpy(audio_data).float().unsqueeze(0).to(self.device)
-            
-            print(f"   开始分离...")
-            print(f"PROGRESS:50%")
-            
-            # 应用模型
-            with torch.no_grad():
-                sources = apply_model(model, wav, device=self.device, progress=True)
+            if result.returncode != 0:
+                print(f"   stdout: {result.stdout}")
+                print(f"   stderr: {result.stderr}")
+                raise RuntimeError(f"Demucs 分离失败: {result.stdout or result.stderr}")
             
             print(f"PROGRESS:70%")
             
-            # 获取源索引
-            source_names = model.sources
-            print(f"   分离出的音轨: {source_names}")
+            # 使用 --two-stems 时，输出是 vocals.wav 和 no_vocals.wav
+            temp_name = os.path.splitext(os.path.basename(audio_path))[0]
+            model_output_dir = Path(output_dir) / self.model / temp_name
             
-            # 找到 vocals 和 no_vocals (或其他背景音轨)
             background_path = os.path.join(output_dir, f"{base_name}_background.wav")
             
-            if 'vocals' in source_names:
-                vocals_idx = source_names.index('vocals')
-                # 背景音 = 原始音频 - 人声
-                vocals = sources[0, vocals_idx]  # (channels, samples)
-                background = wav[0] - vocals  # 从原始音频减去人声
-                print(f"   提取背景音: 原始音频 - 人声")
+            # 优先使用 no_vocals.wav（这就是背景音）
+            no_vocals = model_output_dir / "no_vocals.wav"
+            if no_vocals.exists():
+                import shutil
+                shutil.copy(str(no_vocals), background_path)
+                print(f"✅ 使用 no_vocals.wav 作为背景音")
             else:
-                # 如果没有 vocals，合并所有非人声音轨
-                background = torch.zeros_like(wav[0])
-                for i, name in enumerate(source_names):
-                    if name != 'vocals':
-                        background += sources[0, i]
-                print(f"   合并非人声音轨")
-            
-            # 转换为 numpy 并保存
-            background_np = background.cpu().numpy()
-            
-            # 归一化防止削波
-            max_val = np.abs(background_np).max()
-            if max_val > 1.0:
-                background_np = background_np / max_val * 0.95
-            
-            # 保存音频
-            if use_soundfile:
-                # soundfile 需要 (samples, channels) 格式
-                sf.write(background_path, background_np.T, sr, subtype='PCM_16')
-                print(f"✅ 使用 soundfile 保存背景音")
-            else:
-                # 使用 FFmpeg 保存
-                temp_raw = os.path.join(output_dir, f"{base_name}_temp_raw.raw")
-                # 转换为 int16
-                background_int16 = (background_np * 32767).astype(np.int16)
-                # 交错存储 (L, R, L, R, ...)
-                interleaved = np.empty(background_int16.size, dtype=np.int16)
-                interleaved[0::2] = background_int16[0]
-                interleaved[1::2] = background_int16[1]
-                interleaved.tofile(temp_raw)
-                
-                # 用 FFmpeg 转换为 WAV
-                cmd = [
-                    self.ffmpeg_path, "-y",
-                    "-f", "s16le",
-                    "-ar", str(sr),
-                    "-ac", "2",
-                    "-i", temp_raw,
-                    "-c:a", "pcm_s16le",
-                    background_path
-                ]
-                subprocess.run(cmd, check=True, capture_output=True)
-                os.remove(temp_raw)
-                print(f"✅ 使用 FFmpeg 保存背景音")
+                # 回退到合并 drums + bass + other
+                self._merge_background_tracks(model_output_dir, background_path)
             
             print(f"✅ 背景音分离完成")
             return background_path
             
         except Exception as e:
             print(f"❌ Demucs 失败: {e}")
-            import traceback
-            traceback.print_exc()
             print(f"⚠️  回退到 FFmpeg 简单分离...")
             return self._separate_with_ffmpeg(audio_path, output_dir, base_name)
     
@@ -358,7 +275,7 @@ class BackgroundAudioExtractor:
             cmd.extend(["-filter_complex", filter_complex, "-c:a", "pcm_s16le", output_path])
         
         subprocess.run(cmd, check=True, capture_output=True)
-
+    
     def _separate_with_spleeter(self, audio_path: str, output_dir: str, base_name: str) -> str:
         """使用Spleeter分离背景音"""
         print(f"\n🎵 Step 2: 使用 Spleeter 分离背景音...")
@@ -397,6 +314,9 @@ class BackgroundAudioExtractor:
         
         background_path = os.path.join(output_dir, f"{base_name}_background.wav")
         
+        # 方案1: 中置声道消除（最有效的 FFmpeg 人声消除方法）
+        # 原理: 人声通常混音在立体声中央，左右声道相减可以消除中央的人声
+        # pan=stereo|c0=c0-c1|c1=c1-c0 表示: 左声道=原左-原右, 右声道=原右-原左
         cmd = [
             self.ffmpeg_path, "-y",
             "-i", audio_path,
@@ -412,6 +332,7 @@ class BackgroundAudioExtractor:
         
         if result.returncode != 0:
             print(f"⚠️  方案1失败，尝试方案2...")
+            # 方案2: 使用 extrastereo 增强立体声差异 + 中置消除
             cmd_fallback = [
                 self.ffmpeg_path, "-y",
                 "-i", audio_path,
@@ -424,6 +345,7 @@ class BackgroundAudioExtractor:
             
             if result2.returncode != 0:
                 print(f"⚠️  方案2失败，尝试方案3...")
+                # 方案3: 频率滤波（去除人声主要频段 300Hz-3000Hz）
                 cmd_freq = [
                     self.ffmpeg_path, "-y",
                     "-i", audio_path,
@@ -438,45 +360,49 @@ class BackgroundAudioExtractor:
         return background_path
 
 
-# 便捷函数（保持向后兼容）
-def convert_video_to_wav(
+def extract_background_audio(
     input_path: str,
     output_dir: str = "output",
-    sample_rate: int = 44100,
-    channels: int = 2,
     engine: str = "demucs",
     model: str = "htdemucs",
-    device: str = "cpu"
+    device: str = "cpu",
+    sample_rate: int = 44100,
+    channels: int = 2,
+    keep_temp: bool = False
 ) -> str:
     """
-    从视频提取环境声音（背景音）
+    便捷函数：从视频提取环境声音
     
     Args:
         input_path: 输入视频路径
         output_dir: 输出目录
-        sample_rate: 采样率
-        channels: 声道数
         engine: 分离引擎 (demucs/spleeter/ffmpeg)
         model: Demucs模型
         device: 计算设备 (cpu/cuda)
+        sample_rate: 采样率
+        channels: 声道数
+        keep_temp: 保留临时文件
     
     Returns:
         背景音文件路径
     """
-    extractor = BackgroundAudioExtractor(engine=engine, model=model, device=device)
+    extractor = BackgroundAudioExtractor(
+        engine=engine,
+        model=model,
+        device=device
+    )
     return extractor.extract_background_audio(
         input_path=input_path,
         output_dir=output_dir,
         sample_rate=sample_rate,
-        channels=channels
+        channels=channels,
+        keep_temp=keep_temp
     )
 
 
-def batch_convert(
+def batch_extract_background(
     input_dir: str,
     output_dir: str = "output",
-    sample_rate: int = 44100,
-    channels: int = 2,
     engine: str = "demucs",
     model: str = "htdemucs",
     device: str = "cpu",
@@ -484,6 +410,17 @@ def batch_convert(
 ) -> list:
     """
     批量从视频提取环境声音
+    
+    Args:
+        input_dir: 输入目录
+        output_dir: 输出目录
+        engine: 分离引擎
+        model: Demucs模型
+        device: 计算设备
+        extensions: 支持的视频扩展名
+    
+    Returns:
+        提取成功的文件列表
     """
     if not os.path.exists(input_dir):
         raise FileNotFoundError(f"输入目录不存在：{input_dir}")
@@ -506,7 +443,7 @@ def batch_convert(
     for i, video_file in enumerate(video_files, 1):
         print(f"\n[{i}/{len(video_files)}] 处理：{os.path.basename(video_file)}")
         try:
-            output_path = extractor.extract_background_audio(video_file, output_dir, sample_rate, channels)
+            output_path = extractor.extract_background_audio(video_file, output_dir)
             extracted_files.append(output_path)
         except Exception as e:
             print(f"❌ 提取失败：{e}")
@@ -518,24 +455,24 @@ def batch_convert(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="从MP4/视频文件提取环境声音（背景音，去除人声）",
+        description="从MP4/视频文件提取环境声音（背景音）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例用法:
   # 使用Demucs提取（推荐，质量最好）
-  python mp4_to_wav.py --input video.mp4
+  python mp4_to_background_audio.py --input video.mp4
   
   # 使用GPU加速
-  python mp4_to_wav.py --input video.mp4 --device cuda
+  python mp4_to_background_audio.py --input video.mp4 --device cuda
   
   # 使用FFmpeg快速提取（质量较差）
-  python mp4_to_wav.py --input video.mp4 --engine ffmpeg
+  python mp4_to_background_audio.py --input video.mp4 --engine ffmpeg
   
   # 批量提取
-  python mp4_to_wav.py --input-dir ./videos --output-dir ./background
+  python mp4_to_background_audio.py --input-dir ./videos --output-dir ./background
   
   # 保留临时文件
-  python mp4_to_wav.py --input video.mp4 --keep-temp
+  python mp4_to_background_audio.py --input video.mp4 --keep-temp
 
 分离引擎说明:
   demucs  - AI模型，质量最好，需要安装: pip install demucs
@@ -577,7 +514,7 @@ if __name__ == "__main__":
                 keep_temp=args.keep_temp
             )
         else:
-            batch_convert(
+            batch_extract_background(
                 input_dir=args.input_dir,
                 output_dir=args.output_dir,
                 engine=args.engine,

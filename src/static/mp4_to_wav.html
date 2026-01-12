@@ -27,11 +27,17 @@
   <body class="bg-dark text-gray-200 font-sans m-0 p-5 md:p-6">
     <div id="app" class="max-w-6xl mx-auto">
       <!-- 顶部标签栏 -->
-      <div class="flex gap-5 border-b-2 border-primary mb-5 items-center">
+      <div class="flex gap-5 border-b-2 border-primary mb-5 items-center flex-wrap">
         <div
           class="tab px-2 py-1 cursor-pointer text-primary border-b-2 border-primary"
         >
           MP4转WAV
+        </div>
+        <div
+          class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
+          @click="goBackgroundAudio()"
+        >
+          环境声提取
         </div>
         <div
           class="tab px-2 py-1 cursor-pointer text-gray-400 hover:text-primary transition-colors"
@@ -250,6 +256,10 @@
             window.location.href = "/static/index.html?tab=task1";
           };
 
+          const goBackgroundAudio = () => {
+            window.location.href = "/static/background_audio.html";
+          };
+
           const goClearVoice = () => {
             window.location.href = "/static/index.html?tab=task3";
           };
@@ -406,6 +416,7 @@
             resultReady,
             wavFile,
             goHome,
+            goBackgroundAudio,
             goClearVoice,
             goOcrSrt,
             goVideoMerger,

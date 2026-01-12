@@ -168,6 +168,10 @@ try:
     # 导入并注册翻译路由
     from routers import translate_routes
     app.include_router(translate_routes.router)
+    
+    # 导入并注册环境声提取路由
+    from routers import background_audio_routes
+    app.include_router(background_audio_routes.router)
 
     # 根路径路由
     @app.get("/", summary="默认首页：重定向到静态页面")
