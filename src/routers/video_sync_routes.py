@@ -25,12 +25,14 @@ class VideoSyncRequest(BaseModel):
     updated_audio_filename: Optional[str] = None  # 更新后的音频文件名（日文配音）
     updated_srt_filename: Optional[str] = None  # 更新后的SRT文件名（日文字幕）
     original_video_filename: Optional[str] = None  # 原始视频文件名（可选）
+    background_audio_filename: Optional[str] = None  # 环境声文件名（可选）
     
     # 绝对路径模式（优先使用）
     original_srt_path: Optional[str] = None  # 原始SRT文件的绝对路径
     updated_audio_path: Optional[str] = None  # 更新后的音频文件的绝对路径
     updated_srt_path: Optional[str] = None  # 更新后的SRT文件的绝对路径
     original_video_path: Optional[str] = None  # 原始视频文件的绝对路径（可选）
+    background_audio_path: Optional[str] = None  # 环境声文件的绝对路径（可选）
     
     max_slowdown_ratio: float = 2.0  # 最大慢放倍率
     quality_preset: str = "medium"  # 质量预设
@@ -43,6 +45,10 @@ class VideoSyncRequest(BaseModel):
     
     # 性能优化选项（新增）
     use_optimized_mode: bool = True  # 是否使用优化模式（一次性处理，默认启用）
+    
+    # 环境声混合选项（新增）
+    background_audio_volume: float = 0.3  # 环境声音量（0.0-1.0，默认30%）
+    enable_background_audio: bool = False  # 是否启用环境声混合
 
 
 # 视频同步任务字典
@@ -149,6 +155,16 @@ async def start_video_sync(request: VideoSyncRequest):
         "原始视频文件"
     )
     
+    # 解析可选的环境声文件
+    background_audio_path = None
+    if request.enable_background_audio:
+        background_audio_path = resolve_path(
+            request.background_audio_path, 
+            request.background_audio_filename, 
+            "环境声文件"
+        )
+        if background_audio_path:
+            print(f"🎶 环境声文件: {background_audio_path}")
     
     # 创建任务输出目录
     task_output_dir = output_dir / f"video_sync_{task_id}"
@@ -290,14 +306,17 @@ async def start_video_sync(request: VideoSyncRequest):
                     input_audio_path=str(updated_audio_path),
                     segments=segments,
                     output_path=str(output_path),
-                    progress_callback=progress_callback
+                    progress_callback=progress_callback,
+                    background_audio_path=str(background_audio_path) if background_audio_path else None,
+                    background_volume=request.background_audio_volume if request.enable_background_audio else None
                 )
                 
                 result = {
                     'success': True,
                     'output_path': str(output_path),
                     'segments_processed': len(segments),
-                    'mode': 'optimized'
+                    'mode': 'optimized',
+                    'background_audio_mixed': background_audio_path is not None
                 }
             else:
                 # 标准模式：多次FFmpeg调用

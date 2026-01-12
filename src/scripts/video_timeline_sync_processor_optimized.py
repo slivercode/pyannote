@@ -1,4 +1,4 @@
-"""
+﻿"""
 视频时间轴同步处理器 - 性能优化版本
 
 优化策略：
@@ -36,7 +36,8 @@ class OptimizedVideoTimelineSyncProcessor:
         use_gpu: bool = False,
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = False,
-        max_segments_per_batch: int = 500  # 新增：每批最多处理的片段数
+        max_segments_per_batch: int = 500,  # 新增：每批最多处理的片段数
+        background_audio_volume: float = 0.3  # 环境声音量（0.0-1.0）
     ):
         """
         初始化优化处理器
@@ -47,12 +48,14 @@ class OptimizedVideoTimelineSyncProcessor:
             quality_preset: 质量预设 (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
             max_segments_per_batch: 每批最多处理的片段数（默认500，避免命令行过长）
+            background_audio_volume: 环境声音量比例（默认0.3，即30%）
         """
         self.ffmpeg_path = ffmpeg_path or self._detect_ffmpeg_path()
         self.use_gpu = use_gpu
         self.quality_preset = quality_preset
         self.enable_frame_interpolation = enable_frame_interpolation
         self.max_segments_per_batch = max_segments_per_batch
+        self.background_audio_volume = background_audio_volume
     
     def _detect_ffmpeg_path(self) -> str:
         """
@@ -373,26 +376,33 @@ class OptimizedVideoTimelineSyncProcessor:
         input_audio_path: str,
         segments: List[VideoSegment],
         output_path: str,
-        progress_callback=None
+        progress_callback=None,
+        background_audio_path: str = None,
+        background_volume: float = None
     ) -> str:
         """
-        优化的视频处理流程（支持分批处理）
+        优化的视频处理流程（支持分批处理和环境声混合）
         
         Args:
             input_video_path: 输入视频路径
-            input_audio_path: 输入音频路径
+            input_audio_path: 输入TTS音频路径
             segments: 视频片段列表
             output_path: 输出路径
             progress_callback: 进度回调函数
+            background_audio_path: 可选，原视频环境声路径（会与视频同步拉伸后混合到TTS音轨）
+            background_volume: 可选，环境声音量（0.0-1.0），默认使用初始化时的设置
         
         Returns:
             输出文件路径
         """
         print("\n" + "="*60)
-        print("🚀 优化处理模式")
+        print("� 优化处理模式")
         print("="*60)
         print(f"📹 输入视频: {input_video_path}")
-        print(f"🎵 输入音频: {input_audio_path}")
+        print(f"🎵 输入TTS音频: {input_audio_path}")
+        if background_audio_path:
+            vol = background_volume if background_volume is not None else self.background_audio_volume
+            print(f"🎶 环境声: {background_audio_path} (音量: {vol*100:.0f}%)")
         print(f"📊 片段数量: {len(segments)}")
         print(f"💾 输出路径: {output_path}")
         
@@ -404,7 +414,9 @@ class OptimizedVideoTimelineSyncProcessor:
                 input_audio_path,
                 segments,
                 output_path,
-                progress_callback
+                progress_callback,
+                background_audio_path,
+                background_volume
             )
         else:
             print(f"\n✅ 片段数量({len(segments)})在阈值内，使用一次性处理模式")
@@ -413,7 +425,9 @@ class OptimizedVideoTimelineSyncProcessor:
                 input_audio_path,
                 segments,
                 output_path,
-                progress_callback
+                progress_callback,
+                background_audio_path,
+                background_volume
             )
     
     def _process_video_in_batches(
@@ -422,17 +436,21 @@ class OptimizedVideoTimelineSyncProcessor:
         input_audio_path: str,
         segments: List[VideoSegment],
         output_path: str,
-        progress_callback=None
+        progress_callback=None,
+        background_audio_path: str = None,
+        background_volume: float = None
     ) -> str:
         """
         分批处理视频
         
         Args:
             input_video_path: 输入视频路径
-            input_audio_path: 输入音频路径
+            input_audio_path: 输入TTS音频路径
             segments: 视频片段列表
             output_path: 输出路径
             progress_callback: 进度回调函数
+            background_audio_path: 可选，环境声路径
+            background_volume: 可选，环境声音量
             
         Returns:
             输出文件路径
@@ -453,7 +471,7 @@ class OptimizedVideoTimelineSyncProcessor:
         try:
             for i, batch in enumerate(batches):
                 if progress_callback:
-                    progress = 20 + int(60 * (i / len(batches)))
+                    progress = 20 + int(50 * (i / len(batches)))
                     progress_callback(progress, f"处理批次 {i+1}/{len(batches)}")
                 
                 batch_output = temp_dir / f"batch_{i:04d}.mp4"
@@ -466,13 +484,28 @@ class OptimizedVideoTimelineSyncProcessor:
                 )
                 batch_videos.append(str(batch_output))
             
-            # 3. 拼接所有批次
+            # 3. 处理环境声（如果提供）
+            mixed_audio_path = input_audio_path
+            if background_audio_path:
+                if progress_callback:
+                    progress_callback(75, "处理环境声")
+                
+                mixed_audio_path = str(temp_dir / "mixed_audio.wav")
+                self._process_and_mix_background_audio(
+                    background_audio_path,
+                    input_audio_path,
+                    segments,
+                    mixed_audio_path,
+                    background_volume
+                )
+            
+            # 4. 拼接所有批次
             if progress_callback:
                 progress_callback(85, "拼接批次视频")
             
             result = self._concatenate_batch_videos(
                 batch_videos,
-                input_audio_path,
+                mixed_audio_path,
                 output_path
             )
             
@@ -499,17 +532,21 @@ class OptimizedVideoTimelineSyncProcessor:
         input_audio_path: str,
         segments: List[VideoSegment],
         output_path: str,
-        progress_callback=None
+        progress_callback=None,
+        background_audio_path: str = None,
+        background_volume: float = None
     ) -> str:
         """
-        一次性处理视频（原有逻辑）
+        一次性处理视频（原有逻辑，增加环境声支持）
         
         Args:
             input_video_path: 输入视频路径
-            input_audio_path: 输入音频路径
+            input_audio_path: 输入TTS音频路径
             segments: 视频片段列表
             output_path: 输出路径
             progress_callback: 进度回调函数
+            background_audio_path: 可选，环境声路径
+            background_volume: 可选，环境声音量
         
         Returns:
             输出文件路径
@@ -531,6 +568,8 @@ class OptimizedVideoTimelineSyncProcessor:
         
         # 创建临时视频文件（无音频）
         temp_video = Path(tempfile.gettempdir()) / f"temp_concat_{id(self)}.mp4"
+        temp_dir = Path(tempfile.gettempdir()) / f"video_sync_temp_{id(self)}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
         
         cmd = [self.ffmpeg_path, '-y']
         
@@ -585,7 +624,7 @@ class OptimizedVideoTimelineSyncProcessor:
             
             # 4. 全局时长校准
             if progress_callback:
-                progress_callback(70, "全局时长校准")
+                progress_callback(60, "全局时长校准")
             
             print("\n" + "="*60)
             print("🎯 全局时长校准")
@@ -600,6 +639,8 @@ class OptimizedVideoTimelineSyncProcessor:
             
             duration_diff = audio_duration - concat_video_duration
             print(f"时长差异: {duration_diff:+.2f}秒")
+            
+            calibration_ratio = 1.0
             
             # 全局校准：修正拼接过程中的累积误差
             # 阈值设为0.1秒，确保精确同步
@@ -616,7 +657,7 @@ class OptimizedVideoTimelineSyncProcessor:
                     print(f"   视频比音频长 {abs(duration_diff):.2f}秒 → 全局加速 {calibration_ratio:.4f}x")
                 
                 # 对拼接后的视频进行全局校准
-                calibrated_video = Path(tempfile.gettempdir()) / f"calibrated_{id(self)}.mp4"
+                calibrated_video = temp_dir / "calibrated_video.mp4"
                 if self._calibrate_video_duration(str(temp_video), str(calibrated_video), calibration_ratio):
                     temp_video = calibrated_video
                     
@@ -633,10 +674,31 @@ class OptimizedVideoTimelineSyncProcessor:
                         print(f"   ✅ 时长精确匹配（误差 < 0.1秒）")
                 else:
                     print(f"⚠️  全局校准失败，使用原始拼接视频")
+                    calibration_ratio = 1.0
             else:
                 print(f"✅ 时长差异在可接受范围内（{abs(duration_diff):.2f}秒 < 0.1秒）")
             
-            # 5. 添加音频
+            # 5. 处理环境声（如果提供）
+            final_audio_path = input_audio_path
+            if background_audio_path:
+                if progress_callback:
+                    progress_callback(75, "处理环境声")
+                
+                print("\n" + "="*60)
+                print("🎶 处理环境声")
+                print("="*60)
+                
+                final_audio_path = str(temp_dir / "mixed_audio.wav")
+                self._process_and_mix_background_audio(
+                    background_audio_path,
+                    input_audio_path,
+                    segments,
+                    final_audio_path,
+                    background_volume,
+                    calibration_ratio
+                )
+            
+            # 6. 添加音频
             if progress_callback:
                 progress_callback(85, "添加音频")
             
@@ -647,7 +709,7 @@ class OptimizedVideoTimelineSyncProcessor:
             # 输入视频和音频
             cmd_audio.extend([
                 '-i', str(temp_video),
-                '-i', input_audio_path
+                '-i', final_audio_path
             ])
             
             # 映射视频和音频
@@ -706,11 +768,9 @@ class OptimizedVideoTimelineSyncProcessor:
         finally:
             # 清理临时文件
             try:
-                if temp_video.exists():
-                    temp_video.unlink()
-                calibrated_video = Path(tempfile.gettempdir()) / f"calibrated_{id(self)}.mp4"
-                if calibrated_video.exists():
-                    calibrated_video.unlink()
+                import shutil
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
             except:
                 pass
     
@@ -912,6 +972,280 @@ class OptimizedVideoTimelineSyncProcessor:
         except subprocess.CalledProcessError as e:
             print(f"   ❌ 全局校准失败: {e}")
             return False
+    
+    def _process_and_mix_background_audio(
+        self,
+        background_audio_path: str,
+        tts_audio_path: str,
+        segments: List[VideoSegment],
+        output_path: str,
+        volume: float = None,
+        global_calibration_ratio: float = 1.0
+    ) -> str:
+        """
+        处理环境声：按片段拉伸后与TTS音轨混合
+        
+        处理流程：
+        1. 对环境声按片段进行拉伸（与视频相同的处理）
+        2. 应用全局校准比例
+        3. 与TTS音轨混合
+        
+        Args:
+            background_audio_path: 原始环境声路径
+            tts_audio_path: TTS音频路径
+            segments: 视频片段列表（包含拉伸信息）
+            output_path: 输出混合音频路径
+            volume: 环境声音量（0.0-1.0）
+            global_calibration_ratio: 全局校准比例
+            
+        Returns:
+            混合后的音频路径
+        """
+        import tempfile
+        
+        vol = volume if volume is not None else self.background_audio_volume
+        print(f"   环境声路径: {background_audio_path}")
+        print(f"   TTS音频路径: {tts_audio_path}")
+        print(f"   环境声音量: {vol*100:.0f}%")
+        print(f"   全局校准比例: {global_calibration_ratio:.4f}x")
+        
+        temp_dir = Path(tempfile.gettempdir()) / f"bg_audio_process_{id(self)}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # 方案1：使用FFmpeg复杂滤镜一次性处理（推荐，效率高）
+            stretched_bg = str(temp_dir / "stretched_background.wav")
+            
+            # 构建音频拉伸滤镜链
+            audio_filter = self._build_audio_stretch_filter(segments, global_calibration_ratio)
+            
+            print(f"   构建音频拉伸滤镜...")
+            
+            # Step 1: 拉伸环境声
+            cmd_stretch = [
+                self.ffmpeg_path, '-y',
+                '-i', background_audio_path,
+                '-filter_complex', audio_filter,
+                '-map', '[outa]',
+                '-c:a', 'pcm_s16le',
+                '-ar', '44100',
+                stretched_bg
+            ]
+            
+            result = subprocess.run(
+                cmd_stretch,
+                capture_output=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            
+            if result.returncode != 0:
+                print(f"   ⚠️  复杂滤镜拉伸失败，尝试简单全局拉伸...")
+                # 回退方案：简单全局拉伸
+                stretched_bg = self._simple_stretch_audio(
+                    background_audio_path,
+                    tts_audio_path,
+                    str(temp_dir / "simple_stretched_bg.wav")
+                )
+            else:
+                print(f"   ✅ 环境声拉伸完成")
+            
+            # Step 2: 混合环境声和TTS音轨
+            print(f"   混合音轨...")
+            
+            # 获取TTS音频时长，确保环境声与之匹配
+            tts_duration = self._get_video_duration(tts_audio_path)
+            
+            cmd_mix = [
+                self.ffmpeg_path, '-y',
+                '-i', tts_audio_path,      # 输入0: TTS音频
+                '-i', stretched_bg,         # 输入1: 拉伸后的环境声
+                '-filter_complex',
+                f'[1:a]volume={vol},apad[bg];'  # 环境声调整音量并填充
+                f'[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0[out]',  # 混合，以TTS时长为准
+                '-map', '[out]',
+                '-c:a', 'pcm_s16le',
+                '-ar', '44100',
+                output_path
+            ]
+            
+            subprocess.run(
+                cmd_mix,
+                capture_output=True,
+                check=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            
+            print(f"   ✅ 音轨混合完成: {output_path}")
+            
+            # 验证输出
+            mixed_duration = self._get_video_duration(output_path)
+            print(f"   混合音频时长: {mixed_duration:.2f}秒")
+            print(f"   TTS音频时长: {tts_duration:.2f}秒")
+            
+            return output_path
+            
+        except Exception as e:
+            print(f"   ❌ 环境声处理失败: {e}")
+            import traceback
+            traceback.print_exc()
+            # 失败时返回原TTS音频
+            print(f"   ⚠️  回退到仅使用TTS音频")
+            return tts_audio_path
+        finally:
+            # 清理临时文件
+            try:
+                import shutil
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+            except:
+                pass
+    
+    def _build_audio_stretch_filter(
+        self,
+        segments: List[VideoSegment],
+        global_calibration_ratio: float = 1.0
+    ) -> str:
+        """
+        构建音频拉伸滤镜链
+        
+        使用atrim+atempo实现分段拉伸：
+        - atrim: 切割音频片段
+        - atempo: 调整播放速度（注意：atempo范围是0.5-2.0，需要级联）
+        - asetpts: 重置时间戳
+        
+        Args:
+            segments: 视频片段列表
+            global_calibration_ratio: 全局校准比例
+            
+        Returns:
+            FFmpeg音频滤镜字符串
+        """
+        filter_parts = []
+        stream_labels = []
+        
+        for i, seg in enumerate(segments):
+            label = f"a{i}"
+            start = seg.start_sec
+            end = seg.end_sec
+            
+            # 计算最终拉伸比例（片段比例 * 全局校准比例）
+            # 注意：视频用setpts乘以ratio来慢放，音频用atempo除以ratio来慢放
+            # 因为setpts增大PTS会慢放，而atempo减小会慢放
+            final_ratio = seg.slowdown_ratio * global_calibration_ratio
+            
+            if seg.needs_slowdown or global_calibration_ratio != 1.0:
+                # 需要拉伸
+                # atempo范围是0.5-2.0，需要级联处理超出范围的值
+                tempo_filters = self._build_atempo_chain(1.0 / final_ratio)
+                filter_parts.append(
+                    f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,{tempo_filters}[{label}]"
+                )
+            else:
+                # 不需要拉伸
+                filter_parts.append(
+                    f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{label}]"
+                )
+            
+            stream_labels.append(f"[{label}]")
+        
+        # 拼接所有片段
+        concat_filter = f"{''.join(stream_labels)}concat=n={len(segments)}:v=0:a=1[outa]"
+        filter_parts.append(concat_filter)
+        
+        return ";".join(filter_parts)
+    
+    def _build_atempo_chain(self, tempo: float) -> str:
+        """
+        构建atempo滤镜链（处理超出0.5-2.0范围的值）
+        
+        atempo的有效范围是0.5到2.0，超出范围需要级联多个atempo
+        例如：tempo=0.25 需要 atempo=0.5,atempo=0.5
+        
+        Args:
+            tempo: 目标速度比例
+            
+        Returns:
+            atempo滤镜字符串
+        """
+        if tempo <= 0:
+            tempo = 0.5
+        
+        filters = []
+        remaining = tempo
+        
+        while remaining < 0.5:
+            filters.append("atempo=0.5")
+            remaining = remaining / 0.5
+        
+        while remaining > 2.0:
+            filters.append("atempo=2.0")
+            remaining = remaining / 2.0
+        
+        # 添加最终的tempo值
+        if 0.5 <= remaining <= 2.0:
+            filters.append(f"atempo={remaining:.4f}")
+        
+        return ",".join(filters) if filters else "atempo=1.0"
+    
+    def _simple_stretch_audio(
+        self,
+        input_audio: str,
+        reference_audio: str,
+        output_path: str
+    ) -> str:
+        """
+        简单全局拉伸音频（回退方案）
+        
+        将输入音频拉伸到与参考音频相同的时长
+        
+        Args:
+            input_audio: 输入音频路径
+            reference_audio: 参考音频路径（用于获取目标时长）
+            output_path: 输出路径
+            
+        Returns:
+            输出音频路径
+        """
+        # 获取时长
+        input_duration = self._get_video_duration(input_audio)
+        target_duration = self._get_video_duration(reference_audio)
+        
+        if input_duration <= 0 or target_duration <= 0:
+            print(f"   ⚠️  无法获取音频时长，跳过拉伸")
+            return input_audio
+        
+        # 计算拉伸比例
+        stretch_ratio = target_duration / input_duration
+        tempo = 1.0 / stretch_ratio  # atempo是速度，不是时长比例
+        
+        print(f"   简单拉伸: {input_duration:.2f}s → {target_duration:.2f}s (tempo={tempo:.4f})")
+        
+        # 构建atempo链
+        tempo_filter = self._build_atempo_chain(tempo)
+        
+        cmd = [
+            self.ffmpeg_path, '-y',
+            '-i', input_audio,
+            '-af', tempo_filter,
+            '-c:a', 'pcm_s16le',
+            '-ar', '44100',
+            output_path
+        ]
+        
+        try:
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                check=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            return output_path
+        except subprocess.CalledProcessError as e:
+            print(f"   ❌ 简单拉伸失败: {e}")
+            return input_audio
     
     def estimate_processing_time(
         self,
