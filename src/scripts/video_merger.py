@@ -1,10 +1,16 @@
 """
 视频字幕烧录模块
 专注于视频和硬字幕的烧录合并，导出带字幕的MP4文件
+
+支持GPU加速：
+- 自动检测NVIDIA GPU可用性
+- 使用h264_nvenc硬件编码器加速
+- 支持CUDA硬件解码加速
 """
 
 import os
 import subprocess
+import shutil
 from pathlib import Path
 from typing import Optional, Dict, List
 
@@ -89,21 +95,164 @@ class VideoMerger:
     1. 将视频和字幕合并，烧录硬字幕到视频画面
     2. 支持字体大小和字体样式自定义
     3. 导出带字幕的MP4文件
+    4. 自动检测并使用GPU加速（如果可用）
     """
     
-    def __init__(self, ffmpeg_path: str = "ffmpeg", subtitle_font_size: int = 24, subtitle_font_name: str = "Arial"):
+    def __init__(
+        self, 
+        ffmpeg_path: str = None, 
+        subtitle_font_size: int = 24, 
+        subtitle_font_name: str = "Arial",
+        use_gpu: bool = None,  # None=自动检测, True=强制使用, False=强制禁用
+        gpu_id: int = 0
+    ):
         """
         初始化视频合并器
         
         Args:
-            ffmpeg_path: FFmpeg可执行文件路径，默认使用系统PATH中的ffmpeg
+            ffmpeg_path: FFmpeg可执行文件路径，默认自动检测
             subtitle_font_size: 字幕字体大小，默认24
             subtitle_font_name: 字幕字体名称，默认Arial
+            use_gpu: GPU使用模式
+                - None: 自动检测GPU可用性
+                - True: 强制使用GPU（如果不可用会报错）
+                - False: 强制使用CPU
+            gpu_id: GPU设备ID，默认0
         """
-        self.ffmpeg_path = ffmpeg_path
+        self.ffmpeg_path = ffmpeg_path or self._detect_ffmpeg_path()
         self.subtitle_font_size = subtitle_font_size
         self.subtitle_font_name = subtitle_font_name
+        self.gpu_id = gpu_id
+        
+        # GPU加速配置
+        self._gpu_available = self._check_gpu_availability()
+        self._nvenc_available = self._check_nvenc_availability()
+        
+        # 确定是否使用GPU
+        if use_gpu is None:
+            # 自动检测模式
+            self.use_gpu = self._gpu_available and self._nvenc_available
+        elif use_gpu:
+            # 强制使用GPU
+            if not self._gpu_available:
+                raise RuntimeError("GPU不可用，无法强制使用GPU模式")
+            if not self._nvenc_available:
+                raise RuntimeError("NVENC编码器不可用，无法强制使用GPU模式")
+            self.use_gpu = True
+        else:
+            # 强制使用CPU
+            self.use_gpu = False
+        
         self._check_ffmpeg()
+        self._print_acceleration_status()
+    
+    def _detect_ffmpeg_path(self) -> str:
+        """
+        自动检测FFmpeg路径
+        
+        Returns:
+            FFmpeg可执行文件路径
+        """
+        import platform
+        
+        system = platform.system()
+        
+        # 1. 尝试项目目录中的FFmpeg
+        if system == "Windows":
+            project_ffmpeg = Path("ffmpeg/bin/ffmpeg.exe")
+            if project_ffmpeg.exists():
+                return str(project_ffmpeg)
+        else:
+            project_ffmpeg = Path("ffmpeg/bin/ffmpeg")
+            if project_ffmpeg.exists():
+                return str(project_ffmpeg)
+        
+        # 2. 尝试系统PATH中的FFmpeg
+        system_ffmpeg = shutil.which("ffmpeg")
+        if system_ffmpeg:
+            return system_ffmpeg
+        
+        # 3. 默认值
+        return "ffmpeg.exe" if system == "Windows" else "ffmpeg"
+    
+    def _check_gpu_availability(self) -> bool:
+        """
+        检查NVIDIA GPU是否可用
+        
+        Returns:
+            GPU是否可用
+        """
+        try:
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=5
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                self._gpu_name = result.stdout.strip().split('\n')[0]
+                return True
+            return False
+            
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+        except Exception:
+            return False
+    
+    def _check_nvenc_availability(self) -> bool:
+        """
+        检查FFmpeg是否支持NVENC硬件编码
+        
+        Returns:
+            NVENC是否可用
+        """
+        if not self._gpu_available:
+            return False
+        
+        try:
+            result = subprocess.run(
+                [self.ffmpeg_path, '-encoders'],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                return 'h264_nvenc' in result.stdout
+            return False
+            
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+        except Exception:
+            return False
+    
+    def _print_acceleration_status(self):
+        """打印加速状态信息"""
+        print("\n" + "="*50)
+        print("🖥️  硬件加速状态")
+        print("="*50)
+        
+        if self._gpu_available:
+            print(f"✅ GPU检测: {getattr(self, '_gpu_name', 'NVIDIA GPU')}")
+        else:
+            print("❌ GPU检测: 未检测到NVIDIA GPU")
+        
+        if self._nvenc_available:
+            print("✅ NVENC编码器: 可用")
+        else:
+            print("❌ NVENC编码器: 不可用")
+        
+        if self.use_gpu:
+            print("🚀 加速模式: GPU硬件加速")
+        else:
+            print("💻 加速模式: CPU软件编码")
+        
+        print("="*50 + "\n")
     
     def _check_ffmpeg(self):
         """检查FFmpeg是否可用"""
@@ -235,17 +384,42 @@ class VideoMerger:
         cmd = [
             self.ffmpeg_path,
             "-y",  # 覆盖输出文件
-            "-i", str(video_path),  # 输入视频
         ]
+        
+        # GPU硬件解码加速（如果可用）
+        if self.use_gpu:
+            cmd.extend([
+                '-hwaccel', 'cuda',
+                '-hwaccel_device', str(self.gpu_id),
+            ])
+        
+        cmd.extend(["-i", str(video_path)])  # 输入视频
         
         # 添加字幕烧录滤镜
         subtitle_filter = f"subtitles='{subtitle_path_str}':force_style='{subtitle_style}'"
         
+        cmd.extend(["-vf", subtitle_filter])  # 视频滤镜
+        
+        # 视频编码器设置
+        if self.use_gpu:
+            # 使用NVIDIA GPU硬件编码器
+            cmd.extend([
+                "-c:v", "h264_nvenc",
+                "-preset", "p4",  # NVENC预设 (p1最快-p7最慢质量最好)
+                "-cq", "23",      # 恒定质量模式
+                "-b:v", "0",      # 禁用比特率限制，使用CQ模式
+            ])
+            print("🚀 使用GPU硬件编码 (h264_nvenc)")
+        else:
+            # 使用CPU软件编码器
+            cmd.extend([
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", "23",
+            ])
+            print("💻 使用CPU软件编码 (libx264)")
+        
         cmd.extend([
-            "-vf", subtitle_filter,  # 视频滤镜
-            "-c:v", "libx264",       # 视频编码器
-            "-preset", "medium",     # 编码预设
-            "-crf", "23",           # 视频质量
             "-c:a", "copy",         # 音频直接复制
             str(output_path)
         ])
@@ -518,8 +692,15 @@ class VideoMerger:
 
 # 使用示例
 if __name__ == "__main__":
-    # 创建合并器
-    merger = VideoMerger(subtitle_font_size=28, subtitle_font_name="Microsoft YaHei")
+    # 创建合并器（自动检测GPU）
+    # use_gpu=None: 自动检测
+    # use_gpu=True: 强制使用GPU
+    # use_gpu=False: 强制使用CPU
+    merger = VideoMerger(
+        subtitle_font_size=28, 
+        subtitle_font_name="Microsoft YaHei",
+        use_gpu=None  # 自动检测GPU
+    )
     
     # 示例：烧录字幕到视频
     try:
