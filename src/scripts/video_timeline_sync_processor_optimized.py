@@ -40,7 +40,7 @@ class OptimizedVideoTimelineSyncProcessor:
         use_gpu: bool = False,
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = False,
-        max_segments_per_batch: int = 300,  # 新增：每批最多处理的片段数
+        max_segments_per_batch: int = 150,  # 新增：每批最多处理的片段数
         background_audio_volume: float = 0.3,  # 环境声音量（0.0-1.0）
         max_parallel_batches: int = None,  # 新增：最大并行批次数（默认自动检测）
         ffmpeg_threads: int = None  # 新增：每个FFmpeg进程的线程数（默认自动）
@@ -126,11 +126,16 @@ class OptimizedVideoTimelineSyncProcessor:
         enable_interpolation: bool = False
     ) -> str:
         """
-        构建FFmpeg复杂滤镜链
+        构建FFmpeg复杂滤镜链（减少累积误差）
         
         使用trim+setpts的正确语法：
         - trim: 切割视频片段
         - setpts=(PTS-STARTPTS)*ratio: 调整播放速度
+        
+        关键优化：
+        1. 使用高精度浮点数（6位小数）
+        2. 跟踪累积输出时长用于验证
+        3. 依赖全局校准修正累积误差
         
         Args:
             segments: 视频片段列表
@@ -144,28 +149,39 @@ class OptimizedVideoTimelineSyncProcessor:
         
         print(f"🔧 构建复杂滤镜链: {len(segments)} 个片段")
         
+        # 计算累积输出时间（用于验证）
+        cumulative_output_time = 0.0
+        
         for i, seg in enumerate(segments):
             label = f"v{i}"
             start = seg.start_sec
             end = seg.end_sec
+            duration = end - start
             
             # 对所有片段都应用 slowdown_ratio，确保精确同步
-            # 即使 ratio 接近 1.0，也应用它以保证时长精确
-            ratio = seg.slowdown_ratio
+            # 使用高精度浮点数减少舍入误差
+            ratio = round(seg.slowdown_ratio, 6)
+            output_duration = duration * ratio
             
             if seg.needs_slowdown and enable_interpolation:
                 # 需要明显慢放且启用帧插值
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio},"
+                    f"[0:v]trim=start={start:.6f}:end={end:.6f},setpts=(PTS-STARTPTS)*{ratio:.6f},"
                     f"minterpolate=fps=60:mi_mode=mci[{label}]"
                 )
             else:
                 # 所有其他情况：应用 slowdown_ratio（包括加速、轻微慢放、保持原速）
+                # 使用高精度时间戳
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
+                    f"[0:v]trim=start={start:.6f}:end={end:.6f},setpts=(PTS-STARTPTS)*{ratio:.6f}[{label}]"
                 )
             
             stream_labels.append(f"[{label}]")
+            cumulative_output_time += output_duration
+            
+            # 每50个片段输出一次累积时间（用于调试）
+            if (i + 1) % 50 == 0:
+                print(f"   片段 {i+1}: 累积输出时长 {cumulative_output_time:.3f}秒")
         
         # 拼接所有片段
         concat_filter = f"{''.join(stream_labels)}concat=n={len(segments)}:v=1:a=0[outv]"
@@ -176,6 +192,7 @@ class OptimizedVideoTimelineSyncProcessor:
         print(f"   滤镜链长度: {len(filter_chain)} 字符")
         print(f"   片段数量: {len(segments)}")
         print(f"   需要调整: {sum(1 for s in segments if abs(s.slowdown_ratio - 1.0) > 0.001)}")
+        print(f"   预期输出时长: {cumulative_output_time:.3f}秒")
         
         return filter_chain
     
@@ -1212,12 +1229,17 @@ class OptimizedVideoTimelineSyncProcessor:
         global_calibration_ratio: float = 1.0
     ) -> str:
         """
-        构建音频拉伸滤镜链
+        构建音频拉伸滤镜链（减少累积误差）
         
         使用atrim+atempo实现分段拉伸：
         - atrim: 切割音频片段
         - atempo: 调整播放速度（注意：atempo范围是0.5-2.0，需要级联）
         - asetpts: 重置时间戳
+        
+        关键优化：
+        1. 使用高精度浮点数（6位小数）
+        2. 跟踪累积输出时长
+        3. 依赖全局校准修正累积误差
         
         Args:
             segments: 视频片段列表
@@ -1229,34 +1251,46 @@ class OptimizedVideoTimelineSyncProcessor:
         filter_parts = []
         stream_labels = []
         
+        cumulative_output_time = 0.0
+        
         for i, seg in enumerate(segments):
             label = f"a{i}"
             start = seg.start_sec
             end = seg.end_sec
+            duration = end - start
             
             # 计算最终拉伸比例（片段比例 * 全局校准比例）
             # 注意：视频用setpts乘以ratio来慢放，音频用atempo除以ratio来慢放
             # 因为setpts增大PTS会慢放，而atempo减小会慢放
-            final_ratio = seg.slowdown_ratio * global_calibration_ratio
+            final_ratio = round(seg.slowdown_ratio * global_calibration_ratio, 6)
+            output_duration = duration * final_ratio
             
             if seg.needs_slowdown or global_calibration_ratio != 1.0:
                 # 需要拉伸
                 # atempo范围是0.5-2.0，需要级联处理超出范围的值
                 tempo_filters = self._build_atempo_chain(1.0 / final_ratio)
+                # 使用高精度时间戳
                 filter_parts.append(
-                    f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,{tempo_filters}[{label}]"
+                    f"[0:a]atrim=start={start:.6f}:end={end:.6f},asetpts=PTS-STARTPTS,{tempo_filters}[{label}]"
                 )
             else:
                 # 不需要拉伸
                 filter_parts.append(
-                    f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{label}]"
+                    f"[0:a]atrim=start={start:.6f}:end={end:.6f},asetpts=PTS-STARTPTS[{label}]"
                 )
             
             stream_labels.append(f"[{label}]")
+            cumulative_output_time += output_duration
+            
+            # 每50个片段输出一次累积时间（用于调试）
+            if (i + 1) % 50 == 0:
+                print(f"   音频片段 {i+1}: 累积输出时长 {cumulative_output_time:.3f}秒")
         
         # 拼接所有片段
         concat_filter = f"{''.join(stream_labels)}concat=n={len(segments)}:v=0:a=1[outa]"
         filter_parts.append(concat_filter)
+        
+        print(f"   音频预期输出时长: {cumulative_output_time:.3f}秒")
         
         return ";".join(filter_parts)
     
