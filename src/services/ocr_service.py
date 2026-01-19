@@ -199,16 +199,17 @@ class OCRService:
             # 如果增强失败，返回原始帧
             return [frame]
     def extract_frames(self, video_path: str, subtitle_region: Optional[SubtitleRegion] = None, 
-                      mode: str = "auto") -> List[Tuple[int, np.ndarray, float]]:
+                      mode: str = "auto", millisecond_precision: bool = True) -> List[Tuple[int, np.ndarray, float]]:
         """
-        提取视频帧用于OCR识别 - 动态间隔版本
+        提取视频帧用于OCR识别 - 毫秒级精度版本
         
         根据识别模式动态调整帧提取策略：
-        - fast: 每秒提取1帧 (适合快速预览)
-        - auto/balanced: 每秒提取2帧 (平衡速度和准确度)
-        - precise: 每秒提取4帧 (最高精度)
+        - fast: 每秒提取2帧 (适合快速预览)
+        - auto/balanced: 每秒提取4帧 (平衡速度和准确度)
+        - precise: 每秒提取8帧 (高精度)
+        - millisecond: 每秒提取10帧 (毫秒级精度，约100ms)
         
-        这样可以根据视频FPS自动适配，而不是固定间隔
+        当 millisecond_precision=True 时，会自动提升采样率以获得更精确的时间轴
         """
         frames = []
         cap = cv2.VideoCapture(video_path)
@@ -222,17 +223,25 @@ class OCRService:
         
         # 根据模式动态计算帧间隔
         if mode == "fast":
-            frames_per_second = 1  # 每秒1帧
-        elif mode == "precise":
-            frames_per_second = 4  # 每秒4帧
-        else:  # auto/balanced
             frames_per_second = 2  # 每秒2帧
+        elif mode == "precise":
+            frames_per_second = 8  # 每秒8帧
+        elif mode == "millisecond":
+            frames_per_second = 10  # 每秒10帧，约100ms精度
+        else:  # auto/balanced
+            frames_per_second = 4  # 每秒4帧
+        
+        # 如果启用毫秒精度，至少使用每秒8帧
+        if millisecond_precision and frames_per_second < 8:
+            frames_per_second = 8
+            print(f"已启用毫秒级精度，提升采样率到每秒{frames_per_second}帧")
         
         frame_interval = max(1, int(fps / frames_per_second))
         frame_index = 0
         
         print(f"视频信息: FPS={fps}, 总帧数={total_frames}")
-        print(f"识别模式: {mode}, 每秒提取{frames_per_second}帧, 帧间隔={frame_interval}")
+        print(f"识别模式: {mode}, 毫秒精度: {millisecond_precision}")
+        print(f"每秒提取{frames_per_second}帧, 帧间隔={frame_interval}, 时间精度约{1000/frames_per_second:.0f}ms")
         
         while True:
             ret, frame = cap.read()
@@ -240,6 +249,7 @@ class OCRService:
                 break
                 
             if frame_index % frame_interval == 0:
+                # 使用精确的时间戳计算（保留毫秒精度）
                 timestamp = frame_index / fps
                 
                 # 如果指定了字幕区域，则裁剪帧
@@ -426,8 +436,13 @@ class OCRService:
                 message="正在提取视频帧..."
             ))
         
-        # 使用识别模式动态提取帧，而不是固定间隔
-        frames = self.extract_frames(video_path, subtitle_region, mode=config.mode)
+        # 使用识别模式动态提取帧，支持毫秒级精度
+        frames = self.extract_frames(
+            video_path, 
+            subtitle_region, 
+            mode=config.mode,
+            millisecond_precision=config.millisecond_precision
+        )
         total_frames = len(frames)
         
         if total_frames == 0:
@@ -483,7 +498,8 @@ class OCRService:
             subtitles = self._filter_watermark_subtitles(subtitles)
             print(f"过滤水印后: {len(subtitles)} 条")
         
-        subtitles = self._merge_continuous_subtitles(subtitles)
+        # 传入视频fps以获得更精确的时间轴
+        subtitles = self._merge_continuous_subtitles(subtitles, fps=video_info.fps)
         print(f"合并后: {len(subtitles)} 条")
         
         processing_time = time.time() - start_time
@@ -500,7 +516,14 @@ class OCRService:
         )
     
     def _remove_duplicate_subtitles(self, subtitles: List[SubtitleItem]) -> List[SubtitleItem]:
-        """去除连续重复的字幕，保留有时间间隔的重复"""
+        """
+        去除连续重复的字幕 - 增强版
+        
+        改进点：
+        1. 使用相似度判断而不是完全匹配
+        2. 处理简繁体差异
+        3. 处理OCR识别的微小差异
+        """
         if not subtitles:
             return subtitles
         
@@ -510,20 +533,37 @@ class OCRService:
         unique_subtitles = []
         prev_text = None
         prev_time = None
+        prev_subtitle = None
         
         for subtitle in sorted_subtitles:
-            text_key = subtitle.text.strip().lower()
+            text_key = subtitle.text.strip()
             
             # 跳过空文本
             if len(text_key) == 0:
                 continue
             
-            # 如果文本与前一条不同，或者时间间隔超过5秒，则保留
-            if prev_text != text_key or (prev_time and subtitle.start_time - prev_time > 5.0):
+            # 计算与前一条字幕的相似度
+            should_keep = True
+            if prev_text:
+                similarity = self._calculate_text_similarity(
+                    prev_text.replace(' ', ''), 
+                    text_key.replace(' ', '')
+                )
+                time_gap = subtitle.start_time - prev_time if prev_time else float('inf')
+                
+                # 如果相似度高于70%且时间间隔小于2秒，认为是重复
+                if similarity >= 0.7 and time_gap < 2.0:
+                    should_keep = False
+                    # 如果当前文本更长，替换之前的
+                    if len(text_key) > len(prev_text) and unique_subtitles:
+                        unique_subtitles[-1] = subtitle
+                        prev_text = text_key
+                        prev_time = subtitle.start_time
+            
+            if should_keep:
                 unique_subtitles.append(subtitle)
                 prev_text = text_key
                 prev_time = subtitle.start_time
-            # 否则是连续重复，跳过
         
         return unique_subtitles
     
@@ -582,17 +622,37 @@ class OCRService:
         
         return filtered_subtitles
     
-    def _merge_continuous_subtitles(self, subtitles: List[SubtitleItem]) -> List[SubtitleItem]:
+    def _merge_continuous_subtitles(self, subtitles: List[SubtitleItem], fps: float = 30.0) -> List[SubtitleItem]:
         """
         合并连续的相同字幕 - 精确时间轴版本
-        参考 video-subtitle-extractor 的实现
-        使用 Levenshtein 距离判断文本相似度
+        
+        核心算法：
+        1. 按帧索引排序字幕
+        2. 使用文本相似度判断是否为同一句字幕（阈值70%）
+        3. 合并时间间隔小于1秒的相似字幕
+        4. 结束时间计算策略：
+           - 如果有多帧识别到相同字幕：结束时间 = 最后一帧时间 + 采样间隔
+           - 如果只有一帧：结束时间 = min(下一条字幕开始时间 - 50ms, 开始时间 + 估算持续时间)
+        5. 选择最完整的文本作为最终结果
         """
         if not subtitles:
             return subtitles
         
-        # 按帧索引排序（而不是时间）
+        # 按帧索引排序
         subtitles.sort(key=lambda x: x.frame_index)
+        
+        # 计算采样间隔时间（基于实际提取的帧间隔）
+        # 如果每秒提取8帧，采样间隔约125ms
+        sample_interval = 1.0 / 8  # 默认假设每秒8帧采样
+        if len(subtitles) >= 2:
+            # 尝试从实际数据估算采样间隔
+            time_diffs = []
+            for k in range(min(10, len(subtitles) - 1)):
+                diff = subtitles[k + 1].start_time - subtitles[k].start_time
+                if 0.05 < diff < 1.0:  # 合理范围内的间隔
+                    time_diffs.append(diff)
+            if time_diffs:
+                sample_interval = min(time_diffs)  # 使用最小间隔作为采样间隔
         
         merged_subtitles = []
         i = 0
@@ -603,40 +663,62 @@ class OCRService:
             start_frame = current.frame_index
             
             # 查找连续相同的字幕
-            j = i
-            similar_group = [current]  # 记录相似的字幕组
+            similar_group = [current]
+            j = i + 1
             
-            while j < len(subtitles) - 1:
-                next_subtitle = subtitles[j + 1]
+            while j < len(subtitles):
+                next_subtitle = subtitles[j]
+                
+                # 检查时间间隔（超过1秒认为是不同字幕）
+                time_gap = next_subtitle.start_time - subtitles[j-1].start_time
+                if time_gap > 1.0:
+                    break
                 
                 # 使用文本相似度判断（去除空格后比较）
                 current_text = current.text.replace(' ', '').strip()
                 next_text = next_subtitle.text.replace(' ', '').strip()
                 
-                # 计算相似度（简单版本：完全相同或编辑距离很小）
+                # 计算相似度
                 similarity = self._calculate_text_similarity(current_text, next_text)
                 
                 # 如果相似度低于阈值，找到了结束点
-                if similarity < 0.8:  # 80%相似度阈值
+                if similarity < 0.7:  # 70%相似度阈值
                     break
                 
-                # 相似，继续
+                # 相似，加入组
                 similar_group.append(next_subtitle)
                 j += 1
             
-            # 计算结束时间
-            if j < len(subtitles):
-                # 使用最后一个相似字幕的时间作为结束
-                end_time = subtitles[j].start_time
-                end_frame = subtitles[j].frame_index
+            # 计算结束时间 - 关键逻辑
+            last_in_group = similar_group[-1]
+            
+            if len(similar_group) > 1:
+                # 多帧识别到相同字幕：结束时间 = 最后一帧时间 + 采样间隔
+                end_time = last_in_group.start_time + sample_interval
             else:
-                # 最后一组字幕，使用最后一帧的时间+1秒
-                end_time = subtitles[j].start_time + 1.0
-                end_frame = subtitles[j].frame_index
+                # 只有一帧识别到字幕：需要估算持续时间
+                if j < len(subtitles):
+                    # 使用下一条字幕的开始时间 - 50ms 作为结束时间
+                    next_start = subtitles[j].start_time
+                    gap_to_next = next_start - start_time
+                    
+                    # 结束时间 = 下一条开始前50ms，但不超过合理的最大持续时间
+                    end_time = next_start - 0.05  # 留50ms间隙
+                    
+                    # 限制最大持续时间为3秒
+                    if end_time - start_time > 3.0:
+                        end_time = start_time + 3.0
+                else:
+                    # 最后一条字幕，估算1秒持续时间
+                    end_time = start_time + 1.0
             
             # 从相似组中选择最长的文本（最完整的识别结果）
             best_text = max(similar_group, key=lambda x: len(x.text.replace(' ', ''))).text
             best_confidence = max(similar_group, key=lambda x: x.confidence).confidence
+            
+            # 确保结束时间大于开始时间（至少200ms）
+            if end_time <= start_time + 0.2:
+                end_time = start_time + 0.2
             
             # 创建合并后的字幕
             merged_subtitle = SubtitleItem(
@@ -649,7 +731,7 @@ class OCRService:
             merged_subtitles.append(merged_subtitle)
             
             # 移动到下一组
-            i = j + 1
+            i = j
         
         return merged_subtitles
     

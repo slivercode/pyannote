@@ -187,6 +187,10 @@ class VideoTimelineSyncProcessor:
         Returns:
             该片段的最大慢放比例
         """
+        # 如果 max_slowdown_ratio 设置为 0 或负数，表示无限制
+        if self.max_slowdown_ratio <= 0:
+            return float('inf')
+        
         if not self.use_dynamic_slowdown_limit:
             # 如果未启用动态限制，返回固定值
             return self.max_slowdown_ratio
@@ -194,10 +198,10 @@ class VideoTimelineSyncProcessor:
         if duration_sec < 0.5:
             # 极短片段：允许最高6.0x慢放
             # 原因：0.3秒的片段即使慢放到1.8秒，视觉上也不会太明显
-            return 6.0
+            return max(6.0, self.max_slowdown_ratio)
         elif duration_sec < 1.0:
             # 短片段：允许最高3.0x慢放
-            return 3.0
+            return max(3.0, self.max_slowdown_ratio)
         else:
             # 中等和长片段：使用用户设置的max_slowdown_ratio
             # 不再对长片段做额外限制，完全尊重用户设置

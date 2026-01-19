@@ -45,23 +45,23 @@ class TimelineAdjuster:
     
     def adjust_timeline(self) -> List[Dict]:
         """
-        动态调整时间轴
+        动态调整时间轴（修复版）
         
-        策略：
-        1. 第一遍：计算每段配音的实际时长
-        2. 第二遍：计算总时长差异
-        3. 第三遍：按比例分配时长差异到各个间隙
+        核心修复：
+        1. 正确计算时长差异（音频总时长 vs 原始字幕总时长，不含间隙）
+        2. 只有当 (音频+原始间隙) > 原始SRT总时长 时才压缩间隙
+        3. 音频时长准确时，保持原始间隙不变
         
         Returns:
             更新后的字幕列表
         """
         print("\n" + "="*60)
-        print("⏱️  开始动态调整时间轴")
+        print("⏱️  开始动态调整时间轴（修复版）")
         print("="*60)
         print(f"原始SRT总时长: {self.original_total_time}ms ({self.original_total_time/1000:.1f}秒)")
         print(f"TTS生成语速: {self.target_speed_factor}x")
         
-        # 第一步：获取每段配音的实际时长（TTS已经按设定语速生成）
+        # 第一步：获取每段配音的实际时长
         actual_durations = []
         
         for i, (subtitle, audio_file) in enumerate(zip(self.subtitles, self.audio_files)):
@@ -73,44 +73,79 @@ class TimelineAdjuster:
             
             actual_durations.append(actual_duration)
             
-            print(f"  字幕 {i+1}: 原时长={original_duration}ms, TTS配音={actual_duration}ms")
+            if i < 5:  # 只显示前5条
+                print(f"  字幕 {i+1}: 原时长={original_duration}ms, TTS配音={actual_duration}ms, "
+                      f"差异={actual_duration - original_duration:+d}ms")
         
-        # 直接使用实际时长（TTS已经按语速生成）
-        effective_durations = actual_durations
+        if len(actual_durations) > 5:
+            print(f"  ... (省略 {len(actual_durations) - 5} 条)")
         
-        # 第二步：计算总时长差异
-        total_actual_duration = sum(actual_durations)
-        time_diff = total_actual_duration - self.original_total_time
+        # 第二步：计算总时长（关键修复：分别计算音频总时长和原始字幕总时长）
+        total_audio_duration = sum(actual_durations)
         
-        print(f"\n总TTS配音时长: {total_actual_duration}ms ({total_actual_duration/1000:.1f}秒)")
-        print(f"与原始SRT差异: {time_diff:+d}ms ({time_diff/1000:+.1f}秒)")
+        # 计算原始字幕总时长（不包含间隙）
+        original_subtitle_duration = sum(s['end_ms'] - s['start_ms'] for s in self.subtitles)
         
+        # 关键：时长差异应该是音频总时长 vs 原始字幕总时长（都不含间隙）
+        audio_time_diff = total_audio_duration - original_subtitle_duration
+        
+        print(f"\n📊 时长分析:")
+        print(f"  原始字幕总时长（不含间隙）: {original_subtitle_duration}ms ({original_subtitle_duration/1000:.1f}秒)")
+        print(f"  TTS音频总时长: {total_audio_duration}ms ({total_audio_duration/1000:.1f}秒)")
+        print(f"  音频时长差异: {audio_time_diff:+d}ms ({audio_time_diff/1000:+.1f}秒)")
+        print(f"  原始SRT总时长（含间隙）: {self.original_total_time}ms ({self.original_total_time/1000:.1f}秒)")
+        
+        # 计算原始间隙
+        gaps = []
+        for i in range(len(self.subtitles)):
+            if i == 0:
+                gap = self.subtitles[i]['start_ms']
+            else:
+                gap = self.subtitles[i]['start_ms'] - self.subtitles[i-1]['end_ms']
+            gaps.append(max(0, gap))
+        
+        total_gap = sum(gaps)
+        print(f"  原始间隙总时长: {total_gap}ms ({total_gap/1000:.1f}秒)")
+        
+        # 第三步：判断处理策略
         if not self.preserve_total_time:
             # 不需要保持总时长，直接按配音时长排列，保留原始间隙
-            print("⚠️ 未启用保持总时长，直接按配音时长排列（保留原始间隙）")
-            return self._simple_timeline_adjustment_no_gaps(effective_durations)
+            print("\n✅ 未启用保持总时长，直接按配音时长排列（保留原始间隙）")
+            return self._simple_timeline_adjustment_no_gaps(actual_durations)
         
-        if abs(time_diff) < 100:
-            # 差异很小（< 100ms = 0.1秒），直接按配音时长排列，保留原始间隙
-            print(f"✅ 差异很小({time_diff:+d}ms < 100ms)，直接按配音时长排列（保留原始间隙）")
-            return self._simple_timeline_adjustment_no_gaps(effective_durations)
+        # 关键修复：判断是否需要压缩间隙
+        # 只有当音频总时长 + 原始间隙 > 原始SRT总时长时，才需要压缩
+        projected_total_time = total_audio_duration + total_gap
+        total_time_diff = projected_total_time - self.original_total_time
         
-        # 第三步：判断是否需要调整时间轴
-        if abs(time_diff) < 100:
-            # 差异很小（< 100ms = 0.1秒），直接按配音时长排列，保留原始间隙
-            print(f"✅ 差异很小({time_diff:+d}ms < 100ms)，直接按配音时长排列（保留原始间隙）")
-            return self._simple_timeline_adjustment_no_gaps(effective_durations)
+        print(f"  预计总时长（音频+原始间隙）: {projected_total_time}ms ({projected_total_time/1000:.1f}秒)")
+        print(f"  与原始SRT差异: {total_time_diff:+d}ms ({total_time_diff/1000:+.1f}秒)")
         
-        if time_diff > 0:
-            # 配音时长超出原始时长，需要压缩间隙或加速
-            print(f"⚠️ 配音超出原始时长 {time_diff}ms ({time_diff/1000:.1f}秒)")
-            print(f"   策略：优先压缩间隙 → 必要时轻微加速（保持清晰）")
-            return self._compress_gaps_first(actual_durations, time_diff)
+        if abs(total_time_diff) < 100:
+            # 差异很小（< 100ms），直接保留原始间隙
+            print(f"\n✅ 差异很小({total_time_diff:+d}ms < 100ms)，保留原始间隙")
+            return self._simple_timeline_adjustment_no_gaps(actual_durations)
+        
+        if total_time_diff < 0:
+            # 音频总时长 + 原始间隙 < 原始SRT总时长
+            # 说明音频变短了，可以保留原始间隙，总时长自然缩短
+            print(f"\n✅ 音频总时长缩短，保留原始间隙，总时长自然缩短")
+            return self._simple_timeline_adjustment_no_gaps(actual_durations)
+        
+        # 只有这种情况才需要压缩间隙：
+        # 音频总时长 + 原始间隙 > 原始SRT总时长
+        print(f"\n⚠️ 音频总时长+原始间隙超出原始SRT {total_time_diff}ms ({total_time_diff/1000:.1f}秒)")
+        print(f"   策略：优先压缩间隙 → 必要时轻微加速（保持清晰）")
+        
+        # 检查间隙是否足够压缩
+        if total_gap >= total_time_diff:
+            # 间隙足够，只压缩间隙
+            print(f"   ✅ 间隙足够（{total_gap}ms >= {total_time_diff}ms），只压缩间隙")
+            return self._compress_gaps_only(actual_durations, gaps, total_time_diff)
         else:
-            # 配音时长短于原始时长
-            print(f"✅ 配音短于原始时长 {abs(time_diff)}ms ({abs(time_diff)/1000:.1f}秒)")
-            print(f"   策略：保持原始间隔，总时长自然缩短")
-            return self._simple_timeline_adjustment_no_gaps(effective_durations)
+            # 间隙不足，需要同时压缩间隙和加速音频
+            print(f"   ⚠️ 间隙不足（{total_gap}ms < {total_time_diff}ms），需要同时压缩间隙和加速音频")
+            return self._compress_gaps_and_speedup(actual_durations, gaps, total_time_diff)
     
     def _get_audio_duration(self, audio_file: str) -> int:
         """获取音频文件时长（毫秒）"""
@@ -288,6 +323,149 @@ class TimelineAdjuster:
         final_time = current_time
         print(f"\n  最终总时长: {final_time}ms (目标: {self.original_total_time}ms)")
         print(f"  误差: {final_time - self.original_total_time:+d}ms")
+        
+        return updated_subtitles
+    
+    def _compress_gaps_only(self, actual_durations: List[int], gaps: List[int], excess_time: int) -> List[Dict]:
+        """
+        只压缩间隙（不加速音频）
+        
+        Args:
+            actual_durations: 实际音频时长列表
+            gaps: 原始间隙列表
+            excess_time: 需要压缩的时长
+        """
+        print(f"\n  🔧 只压缩间隙，不加速音频")
+        
+        total_gap = sum(gaps)
+        remaining_gap = total_gap - excess_time
+        
+        # 按比例压缩间隙
+        if total_gap > 0:
+            compression_ratio = remaining_gap / total_gap
+            compressed_gaps = [int(gap * compression_ratio) for gap in gaps]
+        else:
+            compressed_gaps = [0] * len(gaps)
+        
+        # 显示压缩结果
+        print(f"    原始间隙总时长: {total_gap}ms")
+        print(f"    压缩后间隙总时长: {sum(compressed_gaps)}ms")
+        print(f"    压缩比例: {compression_ratio:.2%}")
+        
+        # 显示前几个间隙的变化
+        for i in range(min(5, len(gaps))):
+            if gaps[i] > 0:
+                print(f"    间隙 {i+1}: {gaps[i]}ms -> {compressed_gaps[i]}ms ({compressed_gaps[i] - gaps[i]:+d}ms)")
+        
+        # 重建时间轴
+        return self._rebuild_timeline_with_gaps(actual_durations, compressed_gaps, actual_durations)
+    
+    def _compress_gaps_and_speedup(self, actual_durations: List[int], gaps: List[int], excess_time: int) -> List[Dict]:
+        """
+        同时压缩间隙和加速音频
+        
+        Args:
+            actual_durations: 实际音频时长列表
+            gaps: 原始间隙列表
+            excess_time: 需要压缩的时长
+        """
+        print(f"\n  🔧 同时压缩间隙和加速音频")
+        
+        total_gap = sum(gaps)
+        remaining_excess = excess_time - total_gap
+        
+        print(f"    移除所有间隙后仍超出: {remaining_excess}ms")
+        
+        # 移除所有间隙
+        compressed_gaps = [0] * len(gaps)
+        
+        # 计算需要的加速倍率
+        total_audio_duration = sum(actual_durations)
+        target_audio_duration = total_audio_duration - remaining_excess
+        required_speedup = total_audio_duration / target_audio_duration
+        
+        print(f"    需要加速倍率: {required_speedup:.2f}x")
+        
+        # 检查是否超过最大语速限制
+        if required_speedup > self.max_speed_limit:
+            print(f"    ⚠️ 超过最大语速限制 {self.max_speed_limit}x")
+            actual_speedup = self.max_speed_limit
+            adjusted_durations = [int(d / actual_speedup) for d in actual_durations]
+            
+            # 计算延长的时长
+            compressed_duration = sum(adjusted_durations)
+            extension = compressed_duration - self.original_total_time
+            
+            print(f"    使用最大语速 {actual_speedup}x，总时长将延长 {extension}ms")
+        else:
+            print(f"    ✅ 使用 {required_speedup:.2f}x 加速")
+            adjusted_durations = [int(d / required_speedup) for d in actual_durations]
+        
+        # 重建时间轴
+        return self._rebuild_timeline_with_gaps(adjusted_durations, compressed_gaps, actual_durations)
+    
+    def _rebuild_timeline_with_gaps(self, adjusted_durations: List[int], gaps: List[int], 
+                                     original_durations: List[int]) -> List[Dict]:
+        """
+        使用指定的间隙重建时间轴
+        
+        Args:
+            adjusted_durations: 调整后的音频时长列表
+            gaps: 间隙列表
+            original_durations: 原始音频时长列表（用于记录）
+        """
+        updated_subtitles = []
+        current_time = 0
+        
+        print(f"\n  🔨 重建时间轴:")
+        
+        for i, (subtitle, duration, gap, original_duration) in enumerate(
+            zip(self.subtitles, adjusted_durations, gaps, original_durations)
+        ):
+            # 添加间隙
+            current_time += gap
+            
+            # 设置新的时间轴
+            updated_subtitle = subtitle.copy()
+            updated_subtitle['start_ms'] = current_time
+            updated_subtitle['end_ms'] = current_time + duration
+            
+            # 保存调整信息
+            if abs(original_duration - duration) > 10:
+                updated_subtitle['original_duration_ms'] = original_duration
+                updated_subtitle['adjusted_duration_ms'] = duration
+                speed_ratio = original_duration / duration if duration > 0 else 1.0
+                
+                if i < 5:
+                    print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
+                          f"(间隙: {gap}ms, 配音: {duration}ms, 语速: {speed_ratio:.2f}x)")
+            else:
+                if i < 5:
+                    print(f"    字幕 {i+1}: {updated_subtitle['start_ms']}ms - {updated_subtitle['end_ms']}ms "
+                          f"(间隙: {gap}ms, 配音: {duration}ms)")
+            
+            updated_subtitles.append(updated_subtitle)
+            
+            # 移动到下一个位置
+            current_time += duration
+        
+        if len(updated_subtitles) > 5:
+            print(f"    ... (省略 {len(updated_subtitles) - 5} 条)")
+        
+        final_time = updated_subtitles[-1]['end_ms'] if updated_subtitles else 0
+        time_diff = final_time - self.original_total_time
+        
+        print(f"\n  📊 时间轴重建完成:")
+        print(f"    原始总时长: {self.original_total_time}ms ({self.original_total_time/1000:.1f}秒)")
+        print(f"    实际总时长: {final_time}ms ({final_time/1000:.1f}秒)")
+        print(f"    时长差异: {time_diff:+d}ms ({time_diff/1000:+.1f}秒)")
+        
+        if abs(time_diff) <= 100:
+            print(f"    ✅ 总时长基本一致（误差 ≤ 0.1秒）")
+        elif time_diff < 0:
+            print(f"    ✅ 总时长缩短 {abs(time_diff)}ms")
+        else:
+            print(f"    ⚠️ 总时长延长 {time_diff}ms")
         
         return updated_subtitles
     

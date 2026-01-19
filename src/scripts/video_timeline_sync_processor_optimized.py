@@ -6,15 +6,19 @@
 2. 避免生成临时文件
 3. 减少FFmpeg调用次数从N次到1次
 4. 保持输出结果完全一致
+5. 多线程并行处理批次，充分利用CPU资源
 
 性能提升：5-10倍
 """
 
 import subprocess
 import json
+import os
 from pathlib import Path
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 
 @dataclass
@@ -36,8 +40,10 @@ class OptimizedVideoTimelineSyncProcessor:
         use_gpu: bool = False,
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = False,
-        max_segments_per_batch: int = 500,  # 新增：每批最多处理的片段数
-        background_audio_volume: float = 0.3  # 环境声音量（0.0-1.0）
+        max_segments_per_batch: int = 300,  # 新增：每批最多处理的片段数
+        background_audio_volume: float = 0.3,  # 环境声音量（0.0-1.0）
+        max_parallel_batches: int = None,  # 新增：最大并行批次数（默认自动检测）
+        ffmpeg_threads: int = None  # 新增：每个FFmpeg进程的线程数（默认自动）
     ):
         """
         初始化优化处理器
@@ -47,8 +53,10 @@ class OptimizedVideoTimelineSyncProcessor:
             use_gpu: 是否使用GPU加速
             quality_preset: 质量预设 (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
-            max_segments_per_batch: 每批最多处理的片段数（默认500，避免命令行过长）
+            max_segments_per_batch: 每批最多处理的片段数（默认300，避免命令行过长）
             background_audio_volume: 环境声音量比例（默认0.3，即30%）
+            max_parallel_batches: 最大并行批次数（默认为CPU核心数/2）
+            ffmpeg_threads: 每个FFmpeg进程的线程数（默认0=自动）
         """
         self.ffmpeg_path = ffmpeg_path or self._detect_ffmpeg_path()
         self.use_gpu = use_gpu
@@ -56,6 +64,16 @@ class OptimizedVideoTimelineSyncProcessor:
         self.enable_frame_interpolation = enable_frame_interpolation
         self.max_segments_per_batch = max_segments_per_batch
         self.background_audio_volume = background_audio_volume
+        
+        # 多线程配置
+        cpu_count = os.cpu_count() or 4
+        self.max_parallel_batches = max_parallel_batches or max(1, cpu_count // 2)
+        self.ffmpeg_threads = ffmpeg_threads if ffmpeg_threads is not None else 0  # 0表示自动
+        
+        # 线程安全的进度锁
+        self._progress_lock = threading.Lock()
+        
+        print(f"🔧 多线程配置: 最大并行批次={self.max_parallel_batches}, FFmpeg线程={self.ffmpeg_threads or '自动'}")
     
     def _detect_ffmpeg_path(self) -> str:
         """
@@ -131,23 +149,20 @@ class OptimizedVideoTimelineSyncProcessor:
             start = seg.start_sec
             end = seg.end_sec
             
-            if seg.needs_slowdown:
-                # 需要慢放
-                if enable_interpolation:
-                    # 带帧插值的慢放
-                    filter_parts.append(
-                        f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{seg.slowdown_ratio},"
-                        f"minterpolate=fps=60:mi_mode=mci[{label}]"
-                    )
-                else:
-                    # 简单慢放
-                    filter_parts.append(
-                        f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{seg.slowdown_ratio}[{label}]"
-                    )
-            else:
-                # 不需要慢放
+            # 对所有片段都应用 slowdown_ratio，确保精确同步
+            # 即使 ratio 接近 1.0，也应用它以保证时长精确
+            ratio = seg.slowdown_ratio
+            
+            if seg.needs_slowdown and enable_interpolation:
+                # 需要明显慢放且启用帧插值
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[{label}]"
+                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio},"
+                    f"minterpolate=fps=60:mi_mode=mci[{label}]"
+                )
+            else:
+                # 所有其他情况：应用 slowdown_ratio（包括加速、轻微慢放、保持原速）
+                filter_parts.append(
+                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
                 )
             
             stream_labels.append(f"[{label}]")
@@ -160,7 +175,7 @@ class OptimizedVideoTimelineSyncProcessor:
         
         print(f"   滤镜链长度: {len(filter_chain)} 字符")
         print(f"   片段数量: {len(segments)}")
-        print(f"   需要慢放: {sum(1 for s in segments if s.needs_slowdown)}")
+        print(f"   需要调整: {sum(1 for s in segments if abs(s.slowdown_ratio - 1.0) > 0.001)}")
         
         return filter_chain
     
@@ -210,7 +225,7 @@ class OptimizedVideoTimelineSyncProcessor:
         total_batches: int
     ) -> str:
         """
-        处理单个批次
+        处理单个批次（线程安全）
         
         Args:
             input_video_path: 输入视频路径
@@ -232,6 +247,20 @@ class OptimizedVideoTimelineSyncProcessor:
         
         # 构建FFmpeg命令（不包含音频）
         cmd = [self.ffmpeg_path, '-y']
+        
+        # 添加多线程参数（第一步优化）
+        if self.ffmpeg_threads == 0:
+            cmd.extend(['-threads', '0'])  # 自动检测
+        else:
+            cmd.extend(['-threads', str(self.ffmpeg_threads)])
+        
+        # 添加滤镜线程参数
+        cpu_count = os.cpu_count() or 4
+        filter_threads = max(2, cpu_count // self.max_parallel_batches)
+        cmd.extend([
+            '-filter_threads', str(filter_threads),
+            '-filter_complex_threads', str(filter_threads)
+        ])
         
         # GPU加速配置
         if self.use_gpu:
@@ -441,7 +470,7 @@ class OptimizedVideoTimelineSyncProcessor:
         background_volume: float = None
     ) -> str:
         """
-        分批处理视频
+        分批并行处理视频（第二步优化：多线程并行）
         
         Args:
             input_video_path: 输入视频路径
@@ -463,28 +492,61 @@ class OptimizedVideoTimelineSyncProcessor:
         
         batches = self._split_segments_into_batches(segments)
         
-        # 2. 处理每个批次
-        batch_videos = []
+        # 2. 准备临时目录和输出路径
+        batch_videos = [None] * len(batches)  # 预分配，保证顺序
         temp_dir = Path(tempfile.gettempdir()) / f"video_sync_batches_{id(self)}"
         temp_dir.mkdir(parents=True, exist_ok=True)
         
-        try:
-            for i, batch in enumerate(batches):
+        # 进度跟踪
+        completed_batches = [0]  # 使用列表以便在闭包中修改
+        
+        def update_progress(batch_idx):
+            """线程安全的进度更新"""
+            with self._progress_lock:
+                completed_batches[0] += 1
                 if progress_callback:
-                    progress = 20 + int(50 * (i / len(batches)))
-                    progress_callback(progress, f"处理批次 {i+1}/{len(batches)}")
-                
-                batch_output = temp_dir / f"batch_{i:04d}.mp4"
-                self._process_batch(
-                    input_video_path,
-                    batch,
-                    str(batch_output),
-                    i,
-                    len(batches)
-                )
-                batch_videos.append(str(batch_output))
+                    progress = 20 + int(50 * (completed_batches[0] / len(batches)))
+                    progress_callback(progress, f"处理批次 {completed_batches[0]}/{len(batches)}")
+        
+        try:
+            # 3. 并行处理批次（第二步优化核心）
+            num_workers = min(len(batches), self.max_parallel_batches)
+            print(f"\n🚀 启动并行处理: {num_workers} 个工作线程处理 {len(batches)} 个批次")
             
-            # 3. 处理环境声（如果提供）
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                # 提交所有批次任务
+                futures = {}
+                for i, batch in enumerate(batches):
+                    batch_output = str(temp_dir / f"batch_{i:04d}.mp4")
+                    future = executor.submit(
+                        self._process_batch,
+                        input_video_path,
+                        batch,
+                        batch_output,
+                        i,
+                        len(batches)
+                    )
+                    futures[future] = i
+                
+                # 等待所有任务完成，按完成顺序处理结果
+                for future in as_completed(futures):
+                    batch_idx = futures[future]
+                    try:
+                        result_path = future.result()
+                        batch_videos[batch_idx] = result_path  # 按原始顺序存储
+                        update_progress(batch_idx)
+                    except Exception as e:
+                        print(f"   ❌ 批次 {batch_idx+1} 处理异常: {e}")
+                        raise
+            
+            # 验证所有批次都已完成
+            if None in batch_videos:
+                missing = [i for i, v in enumerate(batch_videos) if v is None]
+                raise RuntimeError(f"批次处理不完整，缺失批次: {missing}")
+            
+            print(f"\n✅ 所有 {len(batches)} 个批次并行处理完成")
+            
+            # 4. 处理环境声（如果提供）
             mixed_audio_path = input_audio_path
             if background_audio_path:
                 if progress_callback:
@@ -499,7 +561,7 @@ class OptimizedVideoTimelineSyncProcessor:
                     background_volume
                 )
             
-            # 4. 拼接所有批次
+            # 5. 拼接所有批次（按顺序）
             if progress_callback:
                 progress_callback(85, "拼接批次视频")
             
@@ -512,7 +574,7 @@ class OptimizedVideoTimelineSyncProcessor:
             if progress_callback:
                 progress_callback(100, "处理完成")
             
-            print(f"\n✅ 分批处理完成！")
+            print(f"\n✅ 分批并行处理完成！")
             print(f"   输出文件: {output_path}")
             
             return result
@@ -572,6 +634,20 @@ class OptimizedVideoTimelineSyncProcessor:
         temp_dir.mkdir(parents=True, exist_ok=True)
         
         cmd = [self.ffmpeg_path, '-y']
+        
+        # 添加多线程参数（FFmpeg内部多线程优化）
+        if self.ffmpeg_threads == 0:
+            cmd.extend(['-threads', '0'])  # 自动检测
+        else:
+            cmd.extend(['-threads', str(self.ffmpeg_threads)])
+        
+        # 添加滤镜线程参数
+        cpu_count = os.cpu_count() or 4
+        filter_threads = max(2, cpu_count // 2)
+        cmd.extend([
+            '-filter_threads', str(filter_threads),
+            '-filter_complex_threads', str(filter_threads)
+        ])
         
         # GPU加速配置
         if self.use_gpu:
@@ -795,6 +871,20 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         cmd = [self.ffmpeg_path, '-y']  # -y: 覆盖输出文件
         
+        # 添加多线程参数（FFmpeg内部多线程优化）
+        if self.ffmpeg_threads == 0:
+            cmd.extend(['-threads', '0'])  # 自动检测
+        else:
+            cmd.extend(['-threads', str(self.ffmpeg_threads)])
+        
+        # 添加滤镜线程参数
+        cpu_count = os.cpu_count() or 4
+        filter_threads = max(2, cpu_count // 2)
+        cmd.extend([
+            '-filter_threads', str(filter_threads),
+            '-filter_complex_threads', str(filter_threads)
+        ])
+        
         # GPU加速配置
         if self.use_gpu:
             cmd.extend([
@@ -916,6 +1006,20 @@ class OptimizedVideoTimelineSyncProcessor:
         print(f"   应用全局校准: {ratio:.4f}x")
         
         cmd = [self.ffmpeg_path, '-y']
+        
+        # 添加多线程参数（FFmpeg内部多线程优化）
+        if self.ffmpeg_threads == 0:
+            cmd.extend(['-threads', '0'])  # 自动检测
+        else:
+            cmd.extend(['-threads', str(self.ffmpeg_threads)])
+        
+        # 添加滤镜线程参数
+        cpu_count = os.cpu_count() or 4
+        filter_threads = max(2, cpu_count // 2)
+        cmd.extend([
+            '-filter_threads', str(filter_threads),
+            '-filter_complex_threads', str(filter_threads)
+        ])
         
         # GPU加速配置
         if self.use_gpu:
