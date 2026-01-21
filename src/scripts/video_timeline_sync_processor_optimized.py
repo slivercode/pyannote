@@ -231,43 +231,32 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         检测NVIDIA GPU和NVENC支持
         
+        检测策略（按优先级）：
+        1. 直接检测FFmpeg NVENC编码器支持（最可靠）
+        2. 使用nvidia-smi获取GPU名称（可选）
+        3. 尝试常见的nvidia-smi路径（服务器环境）
+        
         Returns:
             GPUInfo对象
         """
         gpu_name = ""
         
-        # 1. 检测NVIDIA驱动和GPU
-        try:
-            # 尝试使用nvidia-smi获取GPU信息
-            result = subprocess.run(
-                ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader,nounits'],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                encoding='utf-8',
-                errors='ignore'
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                gpu_name = result.stdout.strip().split('\n')[0]
-                print(f"   ✅ 检测到NVIDIA GPU: {gpu_name}")
-            else:
-                print(f"   ❌ 未检测到NVIDIA GPU (nvidia-smi失败)")
-                return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
-        except FileNotFoundError:
-            print(f"   ❌ nvidia-smi未找到，可能未安装NVIDIA驱动")
-            return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
-        except subprocess.TimeoutExpired:
-            print(f"   ❌ nvidia-smi超时")
-            return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
-        except Exception as e:
-            print(f"   ❌ 检测NVIDIA GPU失败: {e}")
-            return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
+        # 策略1: 先检测FFmpeg是否支持NVENC编码器（最可靠的方式）
+        # 如果FFmpeg支持h264_nvenc，说明系统有可用的NVIDIA GPU
+        nvenc_available = self._check_ffmpeg_encoder('h264_nvenc')
         
-        # 2. 检测FFmpeg是否支持NVENC编码器
-        if self._check_ffmpeg_encoder('h264_nvenc'):
+        if nvenc_available:
             print(f"   ✅ FFmpeg支持h264_nvenc编码器")
             
-            # 3. 检测CUDA硬件加速
+            # 策略2: 尝试获取GPU名称（可选，不影响功能）
+            gpu_name = self._get_nvidia_gpu_name()
+            if gpu_name:
+                print(f"   ✅ 检测到NVIDIA GPU: {gpu_name}")
+            else:
+                gpu_name = "NVIDIA GPU (名称未知)"
+                print(f"   ⚠️  无法获取GPU名称，但NVENC编码器可用")
+            
+            # 策略3: 检测CUDA硬件加速
             hwaccel = 'cuda'
             if self._check_ffmpeg_hwaccel('cuda'):
                 print(f"   ✅ FFmpeg支持CUDA硬件加速")
@@ -284,8 +273,70 @@ class OptimizedVideoTimelineSyncProcessor:
                 gpu_type='nvidia'
             )
         else:
-            print(f"   ❌ FFmpeg不支持h264_nvenc编码器")
-            return GPUInfo(False, 'libx264', 'h264', '', gpu_name, 'nvidia')
+            # NVENC不可用，尝试获取GPU信息以提供更好的错误提示
+            gpu_name = self._get_nvidia_gpu_name()
+            if gpu_name:
+                print(f"   ⚠️  检测到NVIDIA GPU: {gpu_name}")
+                print(f"   ❌ 但FFmpeg不支持h264_nvenc编码器")
+                print(f"   💡 提示: 请确保FFmpeg编译时包含了NVENC支持")
+                return GPUInfo(False, 'libx264', 'h264', '', gpu_name, 'nvidia')
+            else:
+                print(f"   ❌ 未检测到NVIDIA GPU或NVENC支持")
+                return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
+    
+    def _get_nvidia_gpu_name(self) -> str:
+        """
+        获取NVIDIA GPU名称
+        
+        尝试多种方式获取GPU名称：
+        1. 直接调用nvidia-smi
+        2. 尝试常见的nvidia-smi路径（服务器环境）
+        3. 使用环境变量中的路径
+        
+        Returns:
+            GPU名称，如果无法获取则返回空字符串
+        """
+        import platform
+        
+        # nvidia-smi可能的路径列表
+        nvidia_smi_paths = ['nvidia-smi']  # 首先尝试PATH中的
+        
+        if platform.system() == 'Windows':
+            # Windows常见路径
+            nvidia_smi_paths.extend([
+                r'C:\Windows\System32\nvidia-smi.exe',
+                r'C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe',
+            ])
+        else:
+            # Linux常见路径
+            nvidia_smi_paths.extend([
+                '/usr/bin/nvidia-smi',
+                '/usr/local/bin/nvidia-smi',
+                '/opt/nvidia/bin/nvidia-smi',
+                '/usr/local/cuda/bin/nvidia-smi',
+            ])
+            # 添加CUDA_HOME环境变量路径
+            cuda_home = os.environ.get('CUDA_HOME') or os.environ.get('CUDA_PATH')
+            if cuda_home:
+                nvidia_smi_paths.append(os.path.join(cuda_home, 'bin', 'nvidia-smi'))
+        
+        # 尝试每个路径
+        for nvidia_smi in nvidia_smi_paths:
+            try:
+                result = subprocess.run(
+                    [nvidia_smi, '--query-gpu=name', '--format=csv,noheader,nounits'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip().split('\n')[0]
+            except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+                continue
+        
+        return ""
     
     def _detect_amd_gpu(self) -> GPUInfo:
         """
