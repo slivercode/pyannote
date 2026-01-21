@@ -40,7 +40,7 @@ class VideoSyncRequest(BaseModel):
     include_gaps: bool = True  # 是否包含字幕之间的间隔片段
     
     # GPU加速选项
-    use_gpu: bool = False  # 是否使用GPU加速
+    use_gpu: Optional[bool] = None  # 是否使用GPU加速（None=自动检测，True=强制启用，False=禁用）
     gpu_id: int = 0  # GPU设备ID
     
     # 性能优化选项（新增）
@@ -219,7 +219,8 @@ async def start_video_sync(request: VideoSyncRequest):
                 # 创建优化处理器（自动检测FFmpeg路径）
                 processor = OptimizedVideoTimelineSyncProcessor(
                     # ffmpeg_path 参数移除，让处理器自动检测
-                    use_gpu=request.use_gpu,
+                    use_gpu=request.use_gpu,  # None=自动检测，True=强制启用，False=禁用
+                    gpu_device=request.gpu_id,
                     quality_preset=request.quality_preset,
                     enable_frame_interpolation=request.enable_frame_interpolation
                 )
