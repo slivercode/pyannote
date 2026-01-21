@@ -31,7 +31,7 @@ import subprocess
 import json
 import os
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Union, Optional
 from dataclasses import dataclass
 
 
@@ -45,33 +45,49 @@ class VideoSegment:
     segment_type: str  # 'subtitle' or 'gap'
 
 
+@dataclass
+class GPUInfo:
+    """GPU信息"""
+    available: bool
+    encoder: str  # 'h264_nvenc', 'h264_amf', 'h264_qsv', 'libx264'
+    decoder: str  # 'h264_cuvid', 'h264', etc.
+    hwaccel: str  # 'cuda', 'dxva2', 'qsv', 'd3d11va', ''
+    gpu_name: str
+    gpu_type: str  # 'nvidia', 'amd', 'intel', 'none'
+
+
 class OptimizedVideoTimelineSyncProcessor:
     """优化的视频时间轴同步处理器"""
     
     def __init__(
         self,
         ffmpeg_path: str = None,  # 改为可选，自动检测
-        use_gpu: bool = False,
+        use_gpu: Union[bool, str] = "auto",  # 支持 True/False/"auto"
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = False,
         max_segments_per_batch: int = 300,  # 新增：每批最多处理的片段数
         background_audio_volume: float = 0.3,  # 环境声音量（0.0-1.0）
-        ffmpeg_threads: int = None  # 新增：每个FFmpeg进程的线程数（默认自动）
+        ffmpeg_threads: int = None,  # 新增：每个FFmpeg进程的线程数（默认自动）
+        gpu_device: int = 0  # GPU设备ID（多GPU时使用）
     ):
         """
         初始化优化处理器
         
         Args:
             ffmpeg_path: FFmpeg可执行文件路径（可选，自动检测）
-            use_gpu: 是否使用GPU加速
+            use_gpu: GPU加速模式
+                - "auto": 自动检测GPU可用性并选择最佳方案（推荐）
+                - True: 强制使用GPU（如果不可用会报错）
+                - False: 强制使用CPU
             quality_preset: 质量预设 (ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
             max_segments_per_batch: 每批最多处理的片段数（默认300，避免命令行过长）
             background_audio_volume: 环境声音量比例（默认0.3，即30%）
             ffmpeg_threads: 每个FFmpeg进程的线程数（默认0=自动，建议CPU核心数/4）
+            gpu_device: GPU设备ID，多GPU系统时指定使用哪个GPU（默认0）
         """
         self.ffmpeg_path = ffmpeg_path or self._detect_ffmpeg_path()
-        self.use_gpu = use_gpu
+        self.gpu_device = gpu_device
         self.quality_preset = quality_preset
         self.enable_frame_interpolation = enable_frame_interpolation
         self.max_segments_per_batch = max_segments_per_batch
@@ -81,7 +97,408 @@ class OptimizedVideoTimelineSyncProcessor:
         cpu_count = os.cpu_count() or 4
         self.ffmpeg_threads = ffmpeg_threads if ffmpeg_threads is not None else 0  # 0表示自动
         
-        print(f"🔧 配置: FFmpeg线程={self.ffmpeg_threads or '自动'}, 每批最多{self.max_segments_per_batch}个片段")
+        # GPU自动检测和配置
+        self.gpu_info: Optional[GPUInfo] = None
+        self.use_gpu = self._configure_gpu(use_gpu)
+        
+        # 显示配置信息
+        gpu_status = "GPU" if self.use_gpu else "CPU"
+        if self.gpu_info and self.gpu_info.available:
+            gpu_status = f"GPU ({self.gpu_info.gpu_name}, {self.gpu_info.encoder})"
+        print(f"🔧 配置: {gpu_status}, FFmpeg线程={self.ffmpeg_threads or '自动'}, 每批最多{self.max_segments_per_batch}个片段")
+    
+    def _configure_gpu(self, use_gpu: Union[bool, str]) -> bool:
+        """
+        配置GPU使用模式
+        
+        Args:
+            use_gpu: GPU使用模式 (True/False/"auto")
+            
+        Returns:
+            是否使用GPU
+        """
+        if use_gpu == "auto":
+            # 自动检测GPU可用性
+            self.gpu_info = self._detect_gpu_availability()
+            if self.gpu_info.available:
+                print(f"🎮 自动检测: 发现可用GPU - {self.gpu_info.gpu_name}")
+                print(f"   编码器: {self.gpu_info.encoder}")
+                print(f"   硬件加速: {self.gpu_info.hwaccel}")
+                return True
+            else:
+                print(f"💻 自动检测: 未发现可用GPU，使用CPU模式")
+                return False
+        elif use_gpu is True:
+            # 强制使用GPU
+            self.gpu_info = self._detect_gpu_availability()
+            if not self.gpu_info.available:
+                print(f"⚠️  警告: 强制GPU模式但未检测到可用GPU，可能会失败")
+                # 设置默认NVIDIA配置
+                self.gpu_info = GPUInfo(
+                    available=False,
+                    encoder='h264_nvenc',
+                    decoder='h264_cuvid',
+                    hwaccel='cuda',
+                    gpu_name='Unknown NVIDIA GPU',
+                    gpu_type='nvidia'
+                )
+            return True
+        else:
+            # 强制使用CPU
+            self.gpu_info = GPUInfo(
+                available=False,
+                encoder='libx264',
+                decoder='h264',
+                hwaccel='',
+                gpu_name='',
+                gpu_type='none'
+            )
+            return False
+    
+    def _detect_gpu_availability(self) -> GPUInfo:
+        """
+        自动检测GPU可用性和FFmpeg编码器支持
+        
+        检测顺序：
+        1. NVIDIA GPU (NVENC) - 最常见，性能最好
+        2. AMD GPU (AMF) - AMD显卡
+        3. Intel GPU (QSV) - Intel核显/独显
+        
+        Returns:
+            GPUInfo对象，包含GPU信息和推荐的编码器
+        """
+        print("\n🔍 检测GPU环境...")
+        
+        # 1. 检测NVIDIA GPU
+        nvidia_info = self._detect_nvidia_gpu()
+        if nvidia_info.available:
+            return nvidia_info
+        
+        # 2. 检测AMD GPU
+        amd_info = self._detect_amd_gpu()
+        if amd_info.available:
+            return amd_info
+        
+        # 3. 检测Intel GPU
+        intel_info = self._detect_intel_gpu()
+        if intel_info.available:
+            return intel_info
+        
+        # 4. 无可用GPU
+        print("   ❌ 未检测到可用的GPU硬件加速")
+        return GPUInfo(
+            available=False,
+            encoder='libx264',
+            decoder='h264',
+            hwaccel='',
+            gpu_name='',
+            gpu_type='none'
+        )
+    
+    def _detect_nvidia_gpu(self) -> GPUInfo:
+        """
+        检测NVIDIA GPU和NVENC支持
+        
+        Returns:
+            GPUInfo对象
+        """
+        gpu_name = ""
+        
+        # 1. 检测NVIDIA驱动和GPU
+        try:
+            # 尝试使用nvidia-smi获取GPU信息
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader,nounits'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_name = result.stdout.strip().split('\n')[0]
+                print(f"   ✅ 检测到NVIDIA GPU: {gpu_name}")
+            else:
+                print(f"   ❌ 未检测到NVIDIA GPU (nvidia-smi失败)")
+                return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
+        except FileNotFoundError:
+            print(f"   ❌ nvidia-smi未找到，可能未安装NVIDIA驱动")
+            return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
+        except subprocess.TimeoutExpired:
+            print(f"   ❌ nvidia-smi超时")
+            return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
+        except Exception as e:
+            print(f"   ❌ 检测NVIDIA GPU失败: {e}")
+            return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
+        
+        # 2. 检测FFmpeg是否支持NVENC编码器
+        if self._check_ffmpeg_encoder('h264_nvenc'):
+            print(f"   ✅ FFmpeg支持h264_nvenc编码器")
+            
+            # 3. 检测CUDA硬件加速
+            hwaccel = 'cuda'
+            if self._check_ffmpeg_hwaccel('cuda'):
+                print(f"   ✅ FFmpeg支持CUDA硬件加速")
+            else:
+                print(f"   ⚠️  FFmpeg不支持CUDA硬件加速，使用软件解码")
+                hwaccel = ''
+            
+            return GPUInfo(
+                available=True,
+                encoder='h264_nvenc',
+                decoder='h264_cuvid' if hwaccel else 'h264',
+                hwaccel=hwaccel,
+                gpu_name=gpu_name,
+                gpu_type='nvidia'
+            )
+        else:
+            print(f"   ❌ FFmpeg不支持h264_nvenc编码器")
+            return GPUInfo(False, 'libx264', 'h264', '', gpu_name, 'nvidia')
+    
+    def _detect_amd_gpu(self) -> GPUInfo:
+        """
+        检测AMD GPU和AMF支持
+        
+        Returns:
+            GPUInfo对象
+        """
+        # 检测FFmpeg是否支持AMF编码器
+        if self._check_ffmpeg_encoder('h264_amf'):
+            print(f"   ✅ 检测到AMD GPU (h264_amf编码器可用)")
+            
+            # 检测D3D11VA硬件加速（Windows）
+            hwaccel = ''
+            if self._check_ffmpeg_hwaccel('d3d11va'):
+                hwaccel = 'd3d11va'
+                print(f"   ✅ FFmpeg支持D3D11VA硬件加速")
+            elif self._check_ffmpeg_hwaccel('dxva2'):
+                hwaccel = 'dxva2'
+                print(f"   ✅ FFmpeg支持DXVA2硬件加速")
+            
+            return GPUInfo(
+                available=True,
+                encoder='h264_amf',
+                decoder='h264',
+                hwaccel=hwaccel,
+                gpu_name='AMD GPU',
+                gpu_type='amd'
+            )
+        
+        return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
+    
+    def _detect_intel_gpu(self) -> GPUInfo:
+        """
+        检测Intel GPU和QSV支持
+        
+        Returns:
+            GPUInfo对象
+        """
+        # 检测FFmpeg是否支持QSV编码器
+        if self._check_ffmpeg_encoder('h264_qsv'):
+            print(f"   ✅ 检测到Intel GPU (h264_qsv编码器可用)")
+            
+            # 检测QSV硬件加速
+            hwaccel = ''
+            if self._check_ffmpeg_hwaccel('qsv'):
+                hwaccel = 'qsv'
+                print(f"   ✅ FFmpeg支持QSV硬件加速")
+            elif self._check_ffmpeg_hwaccel('d3d11va'):
+                hwaccel = 'd3d11va'
+                print(f"   ✅ FFmpeg支持D3D11VA硬件加速")
+            
+            return GPUInfo(
+                available=True,
+                encoder='h264_qsv',
+                decoder='h264_qsv' if hwaccel == 'qsv' else 'h264',
+                hwaccel=hwaccel,
+                gpu_name='Intel GPU',
+                gpu_type='intel'
+            )
+        
+        return GPUInfo(False, 'libx264', 'h264', '', '', 'none')
+    
+    def _check_ffmpeg_encoder(self, encoder: str) -> bool:
+        """
+        检查FFmpeg是否支持指定的编码器
+        
+        Args:
+            encoder: 编码器名称（如 'h264_nvenc'）
+            
+        Returns:
+            是否支持
+        """
+        try:
+            result = subprocess.run(
+                [self.ffmpeg_path, '-encoders'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            return encoder in result.stdout
+        except Exception:
+            return False
+    
+    def _check_ffmpeg_hwaccel(self, hwaccel: str) -> bool:
+        """
+        检查FFmpeg是否支持指定的硬件加速方式
+        
+        Args:
+            hwaccel: 硬件加速名称（如 'cuda', 'qsv', 'd3d11va'）
+            
+        Returns:
+            是否支持
+        """
+        try:
+            result = subprocess.run(
+                [self.ffmpeg_path, '-hwaccels'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            return hwaccel in result.stdout
+        except Exception:
+            return False
+    
+    def _get_gpu_encoder_params(self) -> List[str]:
+        """
+        获取GPU编码器参数
+        
+        根据检测到的GPU类型返回对应的FFmpeg编码参数
+        
+        Returns:
+            FFmpeg编码器参数列表
+        """
+        if not self.use_gpu or not self.gpu_info:
+            # CPU模式
+            return [
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '18'
+            ]
+        
+        gpu_type = self.gpu_info.gpu_type
+        encoder = self.gpu_info.encoder
+        
+        if gpu_type == 'nvidia':
+            # NVIDIA NVENC
+            return [
+                '-c:v', encoder,
+                '-preset', self._convert_preset_for_nvenc(self.quality_preset),
+                '-b:v', '5M',
+                '-rc', 'vbr',  # 可变比特率
+                '-cq', '18'    # 质量级别
+            ]
+        elif gpu_type == 'amd':
+            # AMD AMF
+            return [
+                '-c:v', encoder,
+                '-quality', self._convert_preset_for_amf(self.quality_preset),
+                '-b:v', '5M',
+                '-rc', 'vbr_latency'
+            ]
+        elif gpu_type == 'intel':
+            # Intel QSV
+            return [
+                '-c:v', encoder,
+                '-preset', self._convert_preset_for_qsv(self.quality_preset),
+                '-b:v', '5M',
+                '-global_quality', '18'
+            ]
+        else:
+            # 回退到CPU
+            return [
+                '-c:v', 'libx264',
+                '-preset', self.quality_preset,
+                '-crf', '18'
+            ]
+    
+    def _get_gpu_hwaccel_params(self) -> List[str]:
+        """
+        获取GPU硬件加速解码参数
+        
+        Returns:
+            FFmpeg硬件加速参数列表
+        """
+        if not self.use_gpu or not self.gpu_info or not self.gpu_info.hwaccel:
+            return []
+        
+        hwaccel = self.gpu_info.hwaccel
+        params = ['-hwaccel', hwaccel]
+        
+        if hwaccel == 'cuda':
+            params.extend([
+                '-hwaccel_output_format', 'cuda',
+                '-hwaccel_device', str(self.gpu_device)
+            ])
+        elif hwaccel == 'qsv':
+            params.extend(['-hwaccel_output_format', 'qsv'])
+        elif hwaccel in ('d3d11va', 'dxva2'):
+            params.extend(['-hwaccel_output_format', 'nv12'])
+        
+        return params
+    
+    def _convert_preset_for_nvenc(self, preset: str) -> str:
+        """
+        将通用preset转换为NVENC preset
+        
+        NVENC presets: p1-p7 (p1最快, p7最慢但质量最好)
+        或者: slow, medium, fast, hp, hq, bd, ll, llhq, llhp, lossless, losslesshp
+        """
+        preset_map = {
+            'ultrafast': 'p1',
+            'superfast': 'p2',
+            'veryfast': 'p3',
+            'faster': 'p4',
+            'fast': 'p4',
+            'medium': 'p5',
+            'slow': 'p6',
+            'slower': 'p7',
+            'veryslow': 'p7'
+        }
+        return preset_map.get(preset, 'p5')
+    
+    def _convert_preset_for_amf(self, preset: str) -> str:
+        """
+        将通用preset转换为AMF quality设置
+        
+        AMF quality: speed, balanced, quality
+        """
+        if preset in ('ultrafast', 'superfast', 'veryfast', 'faster', 'fast'):
+            return 'speed'
+        elif preset in ('slow', 'slower', 'veryslow'):
+            return 'quality'
+        else:
+            return 'balanced'
+    
+    def _convert_preset_for_qsv(self, preset: str) -> str:
+        """
+        将通用preset转换为QSV preset
+        
+        QSV presets: veryfast, faster, fast, medium, slow, slower, veryslow
+        """
+        # QSV使用与x264相同的preset名称
+        return preset
+    
+    def get_gpu_status(self) -> Dict:
+        """
+        获取当前GPU状态信息
+        
+        Returns:
+            包含GPU状态的字典
+        """
+        return {
+            'use_gpu': self.use_gpu,
+            'gpu_available': self.gpu_info.available if self.gpu_info else False,
+            'gpu_type': self.gpu_info.gpu_type if self.gpu_info else 'none',
+            'gpu_name': self.gpu_info.gpu_name if self.gpu_info else '',
+            'encoder': self.gpu_info.encoder if self.gpu_info else 'libx264',
+            'hwaccel': self.gpu_info.hwaccel if self.gpu_info else '',
+            'gpu_device': self.gpu_device
+        }
     
     def _detect_ffmpeg_path(self) -> str:
         """
@@ -301,13 +718,8 @@ class OptimizedVideoTimelineSyncProcessor:
         else:
             cmd.extend(['-threads', str(self.ffmpeg_threads)])
         
-        # GPU加速配置
-        if self.use_gpu:
-            cmd.extend([
-                '-hwaccel', 'cuda',
-                '-hwaccel_output_format', 'cuda',
-                '-hwaccel_device', '0'
-            ])
+        # GPU硬件加速解码参数（自动检测）
+        cmd.extend(self._get_gpu_hwaccel_params())
         
         # 输入文件
         cmd.extend(['-i', input_video_path])
@@ -318,19 +730,8 @@ class OptimizedVideoTimelineSyncProcessor:
         # 移除音频
         cmd.append('-an')
         
-        # 视频编码设置（使用高质量以保证精度）
-        if self.use_gpu:
-            cmd.extend([
-                '-c:v', 'h264_nvenc',
-                '-preset', self.quality_preset,
-                '-b:v', '5M'
-            ])
-        else:
-            cmd.extend([
-                '-c:v', 'libx264',
-                '-preset', self.quality_preset,
-                '-crf', '18'  # 高质量
-            ])
+        # 视频编码设置（使用自动检测的GPU编码器）
+        cmd.extend(self._get_gpu_encoder_params())
         
         # 输出文件
         cmd.append(output_path)
@@ -1141,13 +1542,8 @@ class OptimizedVideoTimelineSyncProcessor:
             '-filter_complex_threads', str(filter_threads)
         ])
         
-        # GPU加速配置
-        if self.use_gpu:
-            cmd.extend([
-                '-hwaccel', 'cuda',
-                '-hwaccel_output_format', 'cuda',
-                '-hwaccel_device', '0'
-            ])
+        # GPU硬件加速解码参数（自动检测）
+        cmd.extend(self._get_gpu_hwaccel_params())
         
         # 输入文件
         cmd.extend([
@@ -1166,21 +1562,8 @@ class OptimizedVideoTimelineSyncProcessor:
             '-map', '1:a'      # 使用输入1（新音频）的音频流
         ])
         
-        # 视频编码设置
-        if self.use_gpu:
-            # GPU编码
-            cmd.extend([
-                '-c:v', 'h264_nvenc',
-                '-preset', self.quality_preset,
-                '-b:v', '5M'  # 比特率
-            ])
-        else:
-            # CPU编码
-            cmd.extend([
-                '-c:v', 'libx264',
-                '-preset', self.quality_preset,
-                '-crf', '23'  # 质量因子（18-28，越小质量越好）
-            ])
+        # 视频编码设置（使用自动检测的GPU编码器）
+        cmd.extend(self._get_gpu_encoder_params())
         
         # 音频编码设置
         cmd.extend([
@@ -1277,25 +1660,20 @@ class OptimizedVideoTimelineSyncProcessor:
             '-filter_complex_threads', str(filter_threads)
         ])
         
-        # GPU加速配置
-        if self.use_gpu:
-            cmd.extend([
-                '-hwaccel', 'cuda',
-                '-hwaccel_output_format', 'cuda',
-                '-hwaccel_device', '0'
-            ])
+        # GPU硬件加速解码参数（自动检测）
+        cmd.extend(self._get_gpu_hwaccel_params())
         
         # 输入文件
         cmd.extend(['-i', input_video])
         
-        # 视频滤镜
-        if self.use_gpu:
-            # GPU模式
+        # 视频滤镜（根据GPU类型选择合适的滤镜链）
+        if self.use_gpu and self.gpu_info and self.gpu_info.hwaccel == 'cuda':
+            # NVIDIA CUDA模式：需要在GPU和CPU之间转换
             cmd.extend([
                 '-vf', f'hwdownload,format=nv12,setpts={ratio}*PTS,hwupload'
             ])
         else:
-            # CPU模式
+            # CPU模式或其他GPU模式
             cmd.extend([
                 '-vf', f'setpts={ratio}*PTS'
             ])
@@ -1303,19 +1681,8 @@ class OptimizedVideoTimelineSyncProcessor:
         # 移除音频
         cmd.append('-an')
         
-        # 编码器参数
-        if self.use_gpu:
-            cmd.extend([
-                '-c:v', 'h264_nvenc',
-                '-preset', self.quality_preset,
-                '-b:v', '5M'
-            ])
-        else:
-            cmd.extend([
-                '-c:v', 'libx264',
-                '-preset', self.quality_preset,
-                '-crf', '23'
-            ])
+        # 编码器参数（使用自动检测的GPU编码器）
+        cmd.extend(self._get_gpu_encoder_params())
         
         # 输出文件
         cmd.append(output_video)
@@ -1751,13 +2118,48 @@ def create_segments_from_timeline_diffs(
 
 # 使用示例
 if __name__ == "__main__":
-    # 创建优化处理器
-    processor = OptimizedVideoTimelineSyncProcessor(
-        ffmpeg_path="ffmpeg",
-        use_gpu=False,
-        quality_preset="fast",  # 使用fast预设提升速度
-        enable_frame_interpolation=False  # 不启用帧插值（更快）
+    print("="*60)
+    print("视频时间轴同步处理器 - GPU自动检测演示")
+    print("="*60)
+    
+    # 创建优化处理器（自动检测GPU）
+    print("\n📌 模式1: 自动检测GPU (推荐)")
+    processor_auto = OptimizedVideoTimelineSyncProcessor(
+        use_gpu="auto",  # 自动检测GPU可用性
+        quality_preset="fast",
+        enable_frame_interpolation=False
     )
+    
+    # 显示GPU状态
+    gpu_status = processor_auto.get_gpu_status()
+    print(f"\n📊 GPU状态:")
+    print(f"   使用GPU: {gpu_status['use_gpu']}")
+    print(f"   GPU可用: {gpu_status['gpu_available']}")
+    print(f"   GPU类型: {gpu_status['gpu_type']}")
+    print(f"   GPU名称: {gpu_status['gpu_name']}")
+    print(f"   编码器: {gpu_status['encoder']}")
+    print(f"   硬件加速: {gpu_status['hwaccel']}")
+    
+    print("\n" + "-"*60)
+    
+    # 强制CPU模式
+    print("\n📌 模式2: 强制CPU模式")
+    processor_cpu = OptimizedVideoTimelineSyncProcessor(
+        use_gpu=False,
+        quality_preset="fast"
+    )
+    
+    print("\n" + "-"*60)
+    
+    # 强制GPU模式（如果GPU不可用会警告）
+    print("\n📌 模式3: 强制GPU模式")
+    processor_gpu = OptimizedVideoTimelineSyncProcessor(
+        use_gpu=True,
+        quality_preset="fast",
+        gpu_device=0  # 指定GPU设备ID
+    )
+    
+    print("\n" + "="*60)
     
     # 示例：创建片段列表
     segments = [
@@ -1767,20 +2169,21 @@ if __name__ == "__main__":
     ]
     
     # 估算处理时间
-    estimate = processor.estimate_processing_time(
+    estimate = processor_auto.estimate_processing_time(
         video_duration_sec=300,  # 5分钟视频
         num_segments=100,
         slowdown_segments=50
     )
     
-    print("处理时间估算:")
-    print(f"  预计耗时: {estimate['estimated_minutes']:.1f} 分钟")
-    print(f"  视频时长: {estimate['video_duration']} 秒")
-    print(f"  片段数量: {estimate['num_segments']}")
-    print(f"  质量预设: {estimate['preset']}")
+    print("\n📈 处理时间估算:")
+    print(f"   预计耗时: {estimate['estimated_minutes']:.1f} 分钟")
+    print(f"   视频时长: {estimate['video_duration']} 秒")
+    print(f"   片段数量: {estimate['num_segments']}")
+    print(f"   质量预设: {estimate['preset']}")
+    print(f"   使用GPU: {estimate['use_gpu']}")
     
     # 处理视频（需要实际文件）
-    # processor.process_video_optimized(
+    # processor_auto.process_video_optimized(
     #     'input.mp4',
     #     'audio.wav',
     #     segments,
