@@ -65,7 +65,7 @@ class OptimizedVideoTimelineSyncProcessor:
         use_gpu: Union[bool, str] = "auto",  # 支持 True/False/"auto"
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = False,
-        max_segments_per_batch: int = 300,  # 新增：每批最多处理的片段数
+        max_segments_per_batch: int = 50,  # 新增：每批最多处理的片段数
         background_audio_volume: float = 0.3,  # 环境声音量（0.0-1.0）
         ffmpeg_threads: int = None,  # 新增：每个FFmpeg进程的线程数（默认自动）
         gpu_device: int = 0  # GPU设备ID（多GPU时使用）
