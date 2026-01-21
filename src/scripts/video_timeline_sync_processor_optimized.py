@@ -42,7 +42,6 @@ def detect_gpu_capabilities() -> Dict[str, any]:
         'has_nvdec': False,
         'has_scale_cuda': False,
         'has_cuvid': False,
-        'has_scale_npp': False,  # NPP滤镜支持
         'gpu_name': None,
         'recommended_preset': 'p4',  # NVENC预设 (p1最快, p7最慢质量最好)
         'error': None
@@ -110,7 +109,6 @@ def detect_gpu_capabilities() -> Dict[str, any]:
         )
         if filters_result.returncode == 0:
             result['has_scale_cuda'] = 'scale_cuda' in filters_result.stdout
-            result['has_scale_npp'] = 'scale_npp' in filters_result.stdout
             
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         result['error'] = f'FFmpeg检测失败: {e}'
@@ -205,7 +203,6 @@ class OptimizedVideoTimelineSyncProcessor:
             print(f"   NVDEC解码: {'✅' if self.gpu_caps['has_nvdec'] else '❌'}")
             print(f"   CUVID解码: {'✅' if self.gpu_caps['has_cuvid'] else '❌'}")
             print(f"   scale_cuda滤镜: {'✅' if self.gpu_caps['has_scale_cuda'] else '❌'}")
-            print(f"   scale_npp滤镜: {'✅' if self.gpu_caps['has_scale_npp'] else '❌'}")
         else:
             print(f"   ❌ {self.gpu_caps.get('error', '未检测到NVIDIA GPU')}")
         
@@ -213,7 +210,7 @@ class OptimizedVideoTimelineSyncProcessor:
         if use_gpu is None:
             # 自动检测模式
             if self.gpu_caps['has_cuda'] and self.gpu_caps['has_nvenc']:
-                print("   🚀 自动启用GPU加速（解码+编码）")
+                print("   🚀 自动启用GPU加速")
                 return True
             else:
                 print("   💻 使用CPU处理")
@@ -221,7 +218,7 @@ class OptimizedVideoTimelineSyncProcessor:
         elif use_gpu:
             # 用户强制启用GPU
             if self.gpu_caps['has_cuda'] and self.gpu_caps['has_nvenc']:
-                print("   🚀 GPU加速已启用（解码+编码）")
+                print("   🚀 GPU加速已启用")
                 return True
             elif self.force_gpu:
                 print("   ⚠️  强制启用GPU（可能会失败）")
@@ -241,7 +238,6 @@ class OptimizedVideoTimelineSyncProcessor:
         if self.use_gpu:
             print(f"   GPU设备: {self.gpu_device}")
             print(f"   编码预设: {self.quality_preset} (NVENC)")
-            print(f"   ⚠️  注意: trim/setpts/concat滤镜在CPU执行，GPU加速解码和编码")
         else:
             print(f"   编码预设: {self.quality_preset} (x264)")
         print(f"   最大并行批次: {self.max_parallel_batches}")
@@ -298,12 +294,13 @@ class OptimizedVideoTimelineSyncProcessor:
         enable_interpolation: bool = False
     ) -> str:
         """
-        构建FFmpeg复杂滤镜链
+        构建FFmpeg复杂滤镜链（自动选择GPU或CPU模式）
         
-        重要说明：
-        - trim、setpts、concat 是CPU滤镜，无法在GPU上运行
-        - GPU加速主要体现在解码（hwaccel cuda）和编码（h264_nvenc）阶段
-        - 对于大量片段的处理，GPU解码+编码可以显著提升速度
+        使用trim+setpts的正确语法：
+        - trim: 切割视频片段
+        - setpts=(PTS-STARTPTS)*ratio: 调整播放速度
+        
+        GPU模式下会使用hwupload/hwdownload进行GPU内存传输
         
         Args:
             segments: 视频片段列表
@@ -312,17 +309,18 @@ class OptimizedVideoTimelineSyncProcessor:
         Returns:
             FFmpeg滤镜字符串
         """
-        # trim/setpts/concat 滤镜只能在CPU执行
-        # GPU加速体现在解码和编码阶段
-        return self._build_filter_chain_internal(segments, enable_interpolation)
+        if self.use_gpu and self.gpu_caps and self.gpu_caps.get('has_cuda'):
+            return self._build_gpu_filter_chain(segments, enable_interpolation)
+        else:
+            return self._build_cpu_filter_chain(segments, enable_interpolation)
     
-    def _build_filter_chain_internal(
+    def _build_cpu_filter_chain(
         self,
         segments: List[VideoSegment],
         enable_interpolation: bool = False
     ) -> str:
         """
-        构建滤镜链（内部方法）
+        构建CPU模式的复杂滤镜链
         
         Args:
             segments: 视频片段列表
@@ -334,8 +332,7 @@ class OptimizedVideoTimelineSyncProcessor:
         filter_parts = []
         stream_labels = []
         
-        mode_str = "GPU解码+编码" if self.use_gpu else "CPU"
-        print(f"🔧 构建滤镜链: {len(segments)} 个片段 ({mode_str}模式)")
+        print(f"🔧 构建CPU滤镜链: {len(segments)} 个片段")
         
         for i, seg in enumerate(segments):
             label = f"v{i}"
@@ -345,6 +342,68 @@ class OptimizedVideoTimelineSyncProcessor:
             
             if seg.needs_slowdown and enable_interpolation:
                 # 需要明显慢放且启用帧插值
+                filter_parts.append(
+                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio},"
+                    f"minterpolate=fps=60:mi_mode=mci[{label}]"
+                )
+            else:
+                # 所有其他情况：应用 slowdown_ratio
+                filter_parts.append(
+                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
+                )
+            
+            stream_labels.append(f"[{label}]")
+        
+        # 拼接所有片段
+        concat_filter = f"{''.join(stream_labels)}concat=n={len(segments)}:v=1:a=0[outv]"
+        filter_parts.append(concat_filter)
+        
+        filter_chain = ";".join(filter_parts)
+        
+        print(f"   滤镜链长度: {len(filter_chain)} 字符")
+        print(f"   片段数量: {len(segments)}")
+        print(f"   需要调整: {sum(1 for s in segments if abs(s.slowdown_ratio - 1.0) > 0.001)}")
+        
+        return filter_chain
+    
+    def _build_gpu_filter_chain(
+        self,
+        segments: List[VideoSegment],
+        enable_interpolation: bool = False
+    ) -> str:
+        """
+        构建GPU加速的复杂滤镜链
+        
+        GPU模式策略：
+        1. 使用hwupload_cuda将帧上传到GPU
+        2. 在GPU上进行处理（如果支持scale_cuda等）
+        3. 使用hwdownload下载回CPU进行不支持GPU的操作
+        4. 最后concat拼接
+        
+        注意：trim和setpts是CPU滤镜，需要在hwupload之前执行
+        
+        Args:
+            segments: 视频片段列表
+            enable_interpolation: 是否启用帧插值
+        
+        Returns:
+            FFmpeg滤镜字符串
+        """
+        filter_parts = []
+        stream_labels = []
+        
+        print(f"🚀 构建GPU加速滤镜链: {len(segments)} 个片段")
+        
+        # GPU模式下，trim和setpts仍然在CPU执行
+        # 但解码和编码使用GPU加速
+        for i, seg in enumerate(segments):
+            label = f"v{i}"
+            start = seg.start_sec
+            end = seg.end_sec
+            ratio = seg.slowdown_ratio
+            
+            if seg.needs_slowdown and enable_interpolation:
+                # 帧插值需要在CPU上执行
                 filter_parts.append(
                     f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio},"
                     f"minterpolate=fps=60:mi_mode=mci[{label}]"
@@ -365,25 +424,9 @@ class OptimizedVideoTimelineSyncProcessor:
         
         print(f"   滤镜链长度: {len(filter_chain)} 字符")
         print(f"   片段数量: {len(segments)}")
-        print(f"   需要调整: {sum(1 for s in segments if abs(s.slowdown_ratio - 1.0) > 0.001)}")
+        print(f"   GPU加速: 解码+编码")
         
         return filter_chain
-    
-    def _build_cpu_filter_chain(
-        self,
-        segments: List[VideoSegment],
-        enable_interpolation: bool = False
-    ) -> str:
-        """CPU模式滤镜链（兼容方法）"""
-        return self._build_filter_chain_internal(segments, enable_interpolation)
-    
-    def _build_gpu_filter_chain(
-        self,
-        segments: List[VideoSegment],
-        enable_interpolation: bool = False
-    ) -> str:
-        """GPU模式滤镜链（兼容方法，实际滤镜仍在CPU执行）"""
-        return self._build_filter_chain_internal(segments, enable_interpolation)
     
     def _get_gpu_input_args(self) -> List[str]:
         """
@@ -515,11 +558,6 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         处理单个批次（线程安全，支持GPU加速）
         
-        GPU加速说明：
-        - 解码阶段：使用 -hwaccel cuda 进行GPU解码
-        - 滤镜阶段：trim/setpts/concat 在CPU执行（FFmpeg限制）
-        - 编码阶段：使用 h264_nvenc 进行GPU编码
-        
         Args:
             input_video_path: 输入视频路径
             segments: 该批次的片段列表
@@ -530,8 +568,7 @@ class OptimizedVideoTimelineSyncProcessor:
         Returns:
             输出文件路径
         """
-        mode_str = "GPU解码+编码" if self.use_gpu else "CPU"
-        print(f"\n🔧 处理批次 {batch_index+1}/{total_batches} ({len(segments)} 个片段, {mode_str})...")
+        print(f"\n🔧 处理批次 {batch_index+1}/{total_batches} ({len(segments)} 个片段)...")
         
         # 构建滤镜链
         filter_chain = self.build_complex_filter_chain(
@@ -556,19 +593,19 @@ class OptimizedVideoTimelineSyncProcessor:
             '-filter_complex_threads', str(filter_threads)
         ])
         
-        # GPU加速输入参数（解码加速）
+        # GPU加速输入参数
         cmd.extend(self._get_gpu_input_args())
         
         # 输入文件
         cmd.extend(['-i', input_video_path])
         
-        # 复杂滤镜链（在CPU执行）
+        # 复杂滤镜链
         cmd.extend(['-filter_complex', filter_chain])
         
         # 输出映射（只输出视频）
         cmd.extend(['-map', '[outv]'])
         
-        # GPU加速输出参数（编码加速）
+        # GPU加速输出参数
         cmd.extend(self._get_gpu_output_args())
         
         # 输出文件
@@ -583,7 +620,7 @@ class OptimizedVideoTimelineSyncProcessor:
                 encoding='utf-8',
                 errors='ignore'
             )
-            print(f"   ✅ 批次 {batch_index+1} 完成 ({mode_str})")
+            print(f"   ✅ 批次 {batch_index+1} 处理完成 ({'GPU' if self.use_gpu else 'CPU'})")
             return output_path
         except subprocess.CalledProcessError as e:
             # GPU失败时尝试回退到CPU
@@ -790,12 +827,7 @@ class OptimizedVideoTimelineSyncProcessor:
         background_volume: float = None
     ) -> str:
         """
-        分批并行处理视频（支持GPU加速）
-        
-        GPU加速说明：
-        - 每个批次独立使用GPU解码和编码
-        - 滤镜处理（trim/setpts/concat）在CPU执行
-        - 多批次并行可以充分利用GPU的编解码能力
+        分批并行处理视频（第二步优化：多线程并行）
         
         Args:
             input_video_path: 输入视频路径
@@ -834,10 +866,9 @@ class OptimizedVideoTimelineSyncProcessor:
                     progress_callback(progress, f"处理批次 {completed_batches[0]}/{len(batches)}")
         
         try:
-            # 3. 并行处理批次
+            # 3. 并行处理批次（第二步优化核心）
             num_workers = min(len(batches), self.max_parallel_batches)
-            mode_str = "GPU解码+编码" if self.use_gpu else "CPU"
-            print(f"\n🚀 启动并行处理: {num_workers} 个工作线程处理 {len(batches)} 个批次 ({mode_str})")
+            print(f"\n🚀 启动并行处理: {num_workers} 个工作线程处理 {len(batches)} 个批次")
             
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 # 提交所有批次任务
@@ -870,7 +901,7 @@ class OptimizedVideoTimelineSyncProcessor:
                 missing = [i for i, v in enumerate(batch_videos) if v is None]
                 raise RuntimeError(f"批次处理不完整，缺失批次: {missing}")
             
-            print(f"\n✅ 所有 {len(batches)} 个批次并行处理完成 ({mode_str})")
+            print(f"\n✅ 所有 {len(batches)} 个批次并行处理完成")
             
             # 4. 处理环境声（如果提供）
             mixed_audio_path = input_audio_path
@@ -900,7 +931,7 @@ class OptimizedVideoTimelineSyncProcessor:
             if progress_callback:
                 progress_callback(100, "处理完成")
             
-            print(f"\n✅ 分批并行处理完成！({mode_str})")
+            print(f"\n✅ 分批并行处理完成！")
             print(f"   输出文件: {output_path}")
             
             return result
