@@ -34,13 +34,13 @@ class VideoSyncRequest(BaseModel):
     original_video_path: Optional[str] = None  # 原始视频文件的绝对路径（可选）
     background_audio_path: Optional[str] = None  # 环境声文件的绝对路径（可选）
     
-    max_slowdown_ratio: float = 0  # 最大慢放倍率（0=无限制，需要多少就放多少）
+    max_slowdown_ratio: float = 2.0  # 最大慢放倍率
     quality_preset: str = "medium"  # 质量预设
     enable_frame_interpolation: bool = True  # 是否启用帧插值
     include_gaps: bool = True  # 是否包含字幕之间的间隔片段
     
     # GPU加速选项
-    use_gpu: Optional[bool] = None  # 是否使用GPU加速（None=自动检测，True=强制启用，False=禁用）
+    use_gpu: Optional[bool] = False  # 是否使用GPU加速（None=自动检测，True=强制启用，False=禁用）
     gpu_id: int = 0  # GPU设备ID
     
     # 性能优化选项（新增）
@@ -48,7 +48,7 @@ class VideoSyncRequest(BaseModel):
     
     # 环境声混合选项（新增）
     background_audio_volume: float = 0.3  # 环境声音量（0.0-1.0，默认30%）
-    enable_background_audio: bool = False  # 是否启用环境声混合
+    enable_background_audio: bool = False  # 是否启用环境声混合1
 
 
 # 视频同步任务字典
