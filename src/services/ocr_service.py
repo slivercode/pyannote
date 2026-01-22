@@ -34,6 +34,7 @@ class OCRService:
         try:
             # 延迟导入PaddleOCR以避免启动时的依赖问题
             from paddleocr import PaddleOCR
+            import os
             
             # 检查GPU可用性
             gpu_actually_available = False
@@ -50,6 +51,13 @@ class OCRService:
             
             # 根据实际情况决定是否使用GPU
             use_gpu_final = config.use_gpu and gpu_actually_available
+            
+            # 禁用oneDNN以避免PaddlePaddle 3.x的兼容性问题
+            # 这个问题在CPU模式下特别常见
+            if not use_gpu_final:
+                os.environ['FLAGS_use_mkldnn'] = '0'
+                os.environ['PADDLE_USE_MKLDNN'] = '0'
+                print("  ℹ️ 已禁用oneDNN以提高兼容性")
             
             # PaddleOCR 3.x 使用 device 参数而不是 use_gpu
             # device='gpu' 表示使用GPU，device='cpu' 表示使用CPU
@@ -93,8 +101,6 @@ class OCRService:
             print(f"❌ OCR引擎初始化失败: {e}")
             print(f"{'='*60}\n")
             import traceback
-            traceback.print_exc()
-            return False
             traceback.print_exc()
             return False
     
