@@ -45,6 +45,7 @@ class VideoSyncRequest(BaseModel):
     
     # 性能优化选项（新增）
     use_optimized_mode: bool = True  # 是否使用优化模式（一次性处理，默认启用）
+    max_segments_per_batch: int = 180  # 每批最多处理的片段数（默认180）
     
     # 环境声混合选项（新增）
     background_audio_volume: float = 0.3  # 环境声音量（0.0-1.0，默认30%）
@@ -222,7 +223,9 @@ async def start_video_sync(request: VideoSyncRequest):
                     use_gpu=request.use_gpu,  # None=自动检测，True=强制启用，False=禁用
                     gpu_device=request.gpu_id,
                     quality_preset=request.quality_preset,
-                    enable_frame_interpolation=request.enable_frame_interpolation
+                    enable_frame_interpolation=request.enable_frame_interpolation,
+                    max_segments_per_batch=request.max_segments_per_batch,  # 每批片段数
+                    background_audio_volume=request.background_audio_volume  # 环境声音量
                 )
             else:
                 print("💻 使用标准模式（多次处理）")

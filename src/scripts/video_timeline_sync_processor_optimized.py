@@ -135,7 +135,7 @@ class OptimizedVideoTimelineSyncProcessor:
         use_gpu: bool = None,  # 改为None表示自动检测
         quality_preset: str = "medium",
         enable_frame_interpolation: bool = False,
-        max_segments_per_batch: int = 300,  # 新增：每批最多处理的片段数
+        max_segments_per_batch: int = 180,  # 每批最多处理的片段数（默认180，避免命令行过长）
         background_audio_volume: float = 0.3,  # 环境声音量（0.0-1.0）
         max_parallel_batches: int = None,  # 新增：最大并行批次数（默认自动检测）
         ffmpeg_threads: int = None,  # 新增：每个FFmpeg进程的线程数（默认自动）
@@ -152,7 +152,7 @@ class OptimizedVideoTimelineSyncProcessor:
                 - CPU模式: ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow
                 - GPU模式: p1(最快)/p2/p3/p4(平衡)/p5/p6/p7(最慢质量最好)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
-            max_segments_per_batch: 每批最多处理的片段数（默认300，避免命令行过长）
+            max_segments_per_batch: 每批最多处理的片段数（默认180，避免命令行过长）
             background_audio_volume: 环境声音量比例（默认0.3，即30%）
             max_parallel_batches: 最大并行批次数（默认为CPU核心数/2）
             ffmpeg_threads: 每个FFmpeg进程的线程数（默认0=自动）
