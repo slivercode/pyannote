@@ -22,6 +22,7 @@ class OCRConfig(BaseModel):
     confidence_threshold: float = 0.3  # 置信度阈值（降低以提高召回率）
     remove_duplicates: bool = True  # 是否去除重复字幕
     filter_watermark: bool = False  # 是否过滤水印（默认关闭，避免误判）
+    millisecond_precision: bool = True  # 是否启用毫秒级精度
     # frame_interval 已移除 - 现在基于视频FPS动态提取帧，而不是固定间隔
 
 

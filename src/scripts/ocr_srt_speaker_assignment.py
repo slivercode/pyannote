@@ -33,12 +33,102 @@ from pyannote.audio.pipelines.utils.hook import ProgressHook
 import numpy as np
 
 device = "cuda" if use_gpu else "cpu"
-print(f"使用设备: {device}")
+print(f"使用设备 (Pyannote): {device}")
+
+# 检测PaddleOCR的GPU可用性
+paddle_gpu_available = False
+if not FORCE_CPU:
+    try:
+        import paddle
+        paddle_gpu_available = paddle.is_compiled_with_cuda()
+        if paddle_gpu_available:
+            print(f"✅ PaddleOCR GPU加速可用")
+        else:
+            print(f"⚠️ PaddlePaddle未编译CUDA支持，OCR将使用CPU模式")
+    except ImportError:
+        print(f"⚠️ PaddlePaddle未安装，OCR将使用CPU模式")
+    except Exception as e:
+        print(f"⚠️ 无法检测PaddleOCR GPU状态: {e}，OCR将使用CPU模式")
+else:
+    print(f"⚠️ 强制CPU模式，OCR将使用CPU")
 
 EPSILON = 0.1  # 时间匹配容差（秒）
 NUM_SPEAKERS = 0  # 0表示自动检测
 MAX_SPEAKERS = 0
 MIN_SPEAKERS = 0
+
+
+def initialize_paddleocr(language: str = "ch", use_gpu: bool = True):
+    """
+    初始化PaddleOCR引擎，自动检测GPU可用性
+    
+    Args:
+        language: 识别语言代码 (ch, en, ja, ko等)
+        use_gpu: 是否尝试使用GPU加速
+    
+    Returns:
+        PaddleOCR实例
+    """
+    try:
+        from paddleocr import PaddleOCR
+        
+        # 检查GPU实际可用性
+        gpu_actually_available = False
+        if use_gpu and not FORCE_CPU:
+            try:
+                import paddle
+                gpu_actually_available = paddle.is_compiled_with_cuda()
+                if not gpu_actually_available:
+                    print("⚠️ 用户请求GPU加速，但PaddlePaddle未编译CUDA支持")
+                    print("   将自动降级到CPU模式")
+            except Exception as e:
+                print(f"⚠️ 无法检测GPU状态: {e}")
+                print("   将使用CPU模式")
+        
+        # 根据实际情况决定是否使用GPU
+        use_gpu_final = use_gpu and gpu_actually_available and not FORCE_CPU
+        
+        # PaddleOCR 3.x 使用 device 参数
+        # device='gpu' 表示使用GPU，device='cpu' 表示使用CPU
+        ocr_kwargs = {
+            'lang': language,
+            'device': 'gpu' if use_gpu_final else 'cpu',
+            # 性能优化参数
+            'rec_batch_num': 6,          # 批处理大小
+            'use_angle_cls': False,      # 禁用角度分类（字幕通常是水平的）
+        }
+        
+        print(f"\n{'='*60}")
+        print(f"正在初始化PaddleOCR引擎...")
+        print(f"  语言: {language}")
+        print(f"  用户选择: {'GPU加速' if use_gpu else 'CPU模式'}")
+        print(f"  实际使用: {'GPU加速' if use_gpu_final else 'CPU模式'}")
+        
+        if use_gpu and not use_gpu_final:
+            print(f"  ⚠️ GPU不可用，已自动切换到CPU模式")
+        
+        ocr_engine = PaddleOCR(**ocr_kwargs)
+        
+        # 确认实际使用的设备
+        try:
+            import paddle
+            if paddle.is_compiled_with_cuda() and use_gpu_final:
+                print(f"✅ PaddleOCR引擎初始化成功 - 使用GPU加速")
+            else:
+                print(f"✅ PaddleOCR引擎初始化成功 - 使用CPU模式")
+        except:
+            print(f"✅ PaddleOCR引擎初始化成功")
+        
+        print(f"{'='*60}\n")
+        return ocr_engine
+        
+    except Exception as e:
+        print(f"\n{'='*60}")
+        print(f"❌ PaddleOCR引擎初始化失败: {e}")
+        print(f"{'='*60}\n")
+        import traceback
+        traceback.print_exc()
+        raise RuntimeError(f"PaddleOCR初始化失败：{str(e)}")
 
 
 def sanitize_filename(filename):
