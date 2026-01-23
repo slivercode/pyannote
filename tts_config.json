@@ -4,7 +4,7 @@
     "apiUrl": "http://192.168.110.204:9880",
     "roles": [
       {
-        "name": "",
+        "name": "女",
         "refAudioPath": "cs3.mp3",
         "promptText": "何でだよ 私たちは治療を受けに来たんだよ そうだよ ここはお前の家じゃないだろ",
         "promptLang": "ja",
