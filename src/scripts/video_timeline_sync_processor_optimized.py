@@ -42,6 +42,7 @@ def detect_gpu_capabilities() -> Dict[str, any]:
         'has_nvdec': False,
         'has_scale_cuda': False,
         'has_cuvid': False,
+        'has_scale_npp': False,  # NPP滤镜支持
         'gpu_name': None,
         'recommended_preset': 'p4',  # NVENC预设 (p1最快, p7最慢质量最好)
         'error': None
@@ -109,6 +110,7 @@ def detect_gpu_capabilities() -> Dict[str, any]:
         )
         if filters_result.returncode == 0:
             result['has_scale_cuda'] = 'scale_cuda' in filters_result.stdout
+            result['has_scale_npp'] = 'scale_npp' in filters_result.stdout
             
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         result['error'] = f'FFmpeg检测失败: {e}'
@@ -203,6 +205,7 @@ class OptimizedVideoTimelineSyncProcessor:
             print(f"   NVDEC解码: {'✅' if self.gpu_caps['has_nvdec'] else '❌'}")
             print(f"   CUVID解码: {'✅' if self.gpu_caps['has_cuvid'] else '❌'}")
             print(f"   scale_cuda滤镜: {'✅' if self.gpu_caps['has_scale_cuda'] else '❌'}")
+            print(f"   scale_npp滤镜: {'✅' if self.gpu_caps['has_scale_npp'] else '❌'}")
         else:
             print(f"   ❌ {self.gpu_caps.get('error', '未检测到NVIDIA GPU')}")
         
@@ -210,7 +213,7 @@ class OptimizedVideoTimelineSyncProcessor:
         if use_gpu is None:
             # 自动检测模式
             if self.gpu_caps['has_cuda'] and self.gpu_caps['has_nvenc']:
-                print("   🚀 自动启用GPU加速")
+                print("   🚀 自动启用GPU加速（解码+编码）")
                 return True
             else:
                 print("   💻 使用CPU处理")
@@ -218,7 +221,7 @@ class OptimizedVideoTimelineSyncProcessor:
         elif use_gpu:
             # 用户强制启用GPU
             if self.gpu_caps['has_cuda'] and self.gpu_caps['has_nvenc']:
-                print("   🚀 GPU加速已启用")
+                print("   🚀 GPU加速已启用（解码+编码）")
                 return True
             elif self.force_gpu:
                 print("   ⚠️  强制启用GPU（可能会失败）")
@@ -238,6 +241,7 @@ class OptimizedVideoTimelineSyncProcessor:
         if self.use_gpu:
             print(f"   GPU设备: {self.gpu_device}")
             print(f"   编码预设: {self.quality_preset} (NVENC)")
+            print(f"   ⚠️  注意: trim/setpts/concat滤镜在CPU执行，GPU加速解码和编码")
         else:
             print(f"   编码预设: {self.quality_preset} (x264)")
         print(f"   最大并行批次: {self.max_parallel_batches}")
@@ -294,13 +298,12 @@ class OptimizedVideoTimelineSyncProcessor:
         enable_interpolation: bool = False
     ) -> str:
         """
-        构建FFmpeg复杂滤镜链（自动选择GPU或CPU模式）
+        构建FFmpeg复杂滤镜链
         
-        使用trim+setpts的正确语法：
-        - trim: 切割视频片段
-        - setpts=(PTS-STARTPTS)*ratio: 调整播放速度
-        
-        GPU模式下会使用hwupload/hwdownload进行GPU内存传输
+        重要说明：
+        - trim、setpts、concat 是CPU滤镜，无法在GPU上运行
+        - GPU加速主要体现在解码（hwaccel cuda）和编码（h264_nvenc）阶段
+        - 对于大量片段的处理，GPU解码+编码可以显著提升速度
         
         Args:
             segments: 视频片段列表
@@ -309,18 +312,22 @@ class OptimizedVideoTimelineSyncProcessor:
         Returns:
             FFmpeg滤镜字符串
         """
-        if self.use_gpu and self.gpu_caps and self.gpu_caps.get('has_cuda'):
-            return self._build_gpu_filter_chain(segments, enable_interpolation)
-        else:
-            return self._build_cpu_filter_chain(segments, enable_interpolation)
+        # trim/setpts/concat 滤镜只能在CPU执行
+        # GPU加速体现在解码和编码阶段
+        return self._build_filter_chain_internal(segments, enable_interpolation)
     
-    def _build_cpu_filter_chain(
+    def _build_filter_chain_internal(
         self,
         segments: List[VideoSegment],
         enable_interpolation: bool = False
     ) -> str:
         """
-        构建CPU模式的复杂滤镜链
+        构建滤镜链（内部方法 - 高精度版本）
+        
+        精度优化：
+        - 使用两步setpts: setpts=PTS-STARTPTS,setpts=PTS*ratio
+        - 避免 setpts=(PTS-STARTPTS)*ratio 的精度损失
+        - 使用6位小数精度（微秒级）
         
         Args:
             segments: 视频片段列表
@@ -332,24 +339,28 @@ class OptimizedVideoTimelineSyncProcessor:
         filter_parts = []
         stream_labels = []
         
-        print(f"🔧 构建CPU滤镜链: {len(segments)} 个片段")
+        mode_str = "GPU解码+编码" if self.use_gpu else "CPU"
+        print(f"🔧 构建滤镜链: {len(segments)} 个片段 ({mode_str}模式 + 高精度setpts)")
         
         for i, seg in enumerate(segments):
             label = f"v{i}"
-            start = seg.start_sec
-            end = seg.end_sec
-            ratio = seg.slowdown_ratio
+            # 使用6位小数精度（微秒级）
+            start = f"{seg.start_sec:.6f}"
+            end = f"{seg.end_sec:.6f}"
+            ratio = f"{seg.slowdown_ratio:.6f}"
             
             if seg.needs_slowdown and enable_interpolation:
                 # 需要明显慢放且启用帧插值
+                # 使用两步setpts提高精度
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio},"
+                    f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,setpts=PTS*{ratio},"
                     f"minterpolate=fps=60:mi_mode=mci[{label}]"
                 )
             else:
-                # 所有其他情况：应用 slowdown_ratio
+                # 标准处理
+                # 使用两步setpts提高精度
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
+                    f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,setpts=PTS*{ratio}[{label}]"
                 )
             
             stream_labels.append(f"[{label}]")
@@ -363,70 +374,25 @@ class OptimizedVideoTimelineSyncProcessor:
         print(f"   滤镜链长度: {len(filter_chain)} 字符")
         print(f"   片段数量: {len(segments)}")
         print(f"   需要调整: {sum(1 for s in segments if abs(s.slowdown_ratio - 1.0) > 0.001)}")
+        print(f"   精度模式: 两步setpts + 6位小数（微秒级）")
         
         return filter_chain
+    
+    def _build_cpu_filter_chain(
+        self,
+        segments: List[VideoSegment],
+        enable_interpolation: bool = False
+    ) -> str:
+        """CPU模式滤镜链（兼容方法）"""
+        return self._build_filter_chain_internal(segments, enable_interpolation)
     
     def _build_gpu_filter_chain(
         self,
         segments: List[VideoSegment],
         enable_interpolation: bool = False
     ) -> str:
-        """
-        构建GPU加速的复杂滤镜链
-        
-        GPU模式策略：
-        1. 使用hwupload_cuda将帧上传到GPU
-        2. 在GPU上进行处理（如果支持scale_cuda等）
-        3. 使用hwdownload下载回CPU进行不支持GPU的操作
-        4. 最后concat拼接
-        
-        注意：trim和setpts是CPU滤镜，需要在hwupload之前执行
-        
-        Args:
-            segments: 视频片段列表
-            enable_interpolation: 是否启用帧插值
-        
-        Returns:
-            FFmpeg滤镜字符串
-        """
-        filter_parts = []
-        stream_labels = []
-        
-        print(f"🚀 构建GPU加速滤镜链: {len(segments)} 个片段")
-        
-        # GPU模式下，trim和setpts仍然在CPU执行
-        # 但解码和编码使用GPU加速
-        for i, seg in enumerate(segments):
-            label = f"v{i}"
-            start = seg.start_sec
-            end = seg.end_sec
-            ratio = seg.slowdown_ratio
-            
-            if seg.needs_slowdown and enable_interpolation:
-                # 帧插值需要在CPU上执行
-                filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio},"
-                    f"minterpolate=fps=60:mi_mode=mci[{label}]"
-                )
-            else:
-                # 标准处理
-                filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
-                )
-            
-            stream_labels.append(f"[{label}]")
-        
-        # 拼接所有片段
-        concat_filter = f"{''.join(stream_labels)}concat=n={len(segments)}:v=1:a=0[outv]"
-        filter_parts.append(concat_filter)
-        
-        filter_chain = ";".join(filter_parts)
-        
-        print(f"   滤镜链长度: {len(filter_chain)} 字符")
-        print(f"   片段数量: {len(segments)}")
-        print(f"   GPU加速: 解码+编码")
-        
-        return filter_chain
+        """GPU模式滤镜链（兼容方法，实际滤镜仍在CPU执行）"""
+        return self._build_filter_chain_internal(segments, enable_interpolation)
     
     def _get_gpu_input_args(self) -> List[str]:
         """
@@ -558,6 +524,16 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         处理单个批次（线程安全，支持GPU加速）
         
+        修复说明：
+        - 使用逐片段处理 + concat demuxer 替代 concat filter
+        - 避免 concat filter 重置 PTS 导致 setpts 失效
+        - 每个片段独立处理，确保 setpts 慢放生效
+        
+        GPU加速说明：
+        - 解码阶段：使用 -hwaccel cuda 进行GPU解码
+        - 滤镜阶段：trim/setpts 在CPU执行（FFmpeg限制）
+        - 编码阶段：使用 h264_nvenc 进行GPU编码
+        
         Args:
             input_video_path: 输入视频路径
             segments: 该批次的片段列表
@@ -568,13 +544,92 @@ class OptimizedVideoTimelineSyncProcessor:
         Returns:
             输出文件路径
         """
-        print(f"\n🔧 处理批次 {batch_index+1}/{total_batches} ({len(segments)} 个片段)...")
+        import tempfile
         
-        # 构建滤镜链
-        filter_chain = self.build_complex_filter_chain(
-            segments,
-            enable_interpolation=self.enable_frame_interpolation
-        )
+        mode_str = "GPU解码+编码" if self.use_gpu else "CPU"
+        print(f"\n🔧 处理批次 {batch_index+1}/{total_batches} ({len(segments)} 个片段, {mode_str})...")
+        print(f"   使用逐片段处理模式（修复 concat filter 问题）")
+        
+        # 创建临时目录存储片段
+        temp_dir = Path(tempfile.gettempdir()) / f"batch_{batch_index}_{id(self)}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # 1. 逐个处理片段
+            segment_files = []
+            for i, seg in enumerate(segments):
+                segment_output = str(temp_dir / f"segment_{i:04d}.mp4")
+                self._process_single_segment(
+                    input_video_path,
+                    seg,
+                    segment_output,
+                    i,
+                    len(segments)
+                )
+                segment_files.append(segment_output)
+            
+            # 2. 使用 concat demuxer 拼接片段
+            self._concat_segments_with_demuxer(segment_files, output_path)
+            
+            print(f"   ✅ 批次 {batch_index+1} 完成 ({mode_str})")
+            return output_path
+            
+        except Exception as e:
+            # GPU失败时尝试回退到CPU
+            if self.use_gpu:
+                print(f"   ⚠️  GPU处理失败，尝试CPU回退...")
+                return self._process_batch_cpu_fallback(
+                    input_video_path, segments, output_path, batch_index, total_batches
+                )
+            print(f"   ❌ 批次 {batch_index+1} 处理失败: {e}")
+            raise
+        finally:
+            # 清理临时文件
+            try:
+                import shutil
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+            except:
+                pass
+    
+    def _process_single_segment(
+        self,
+        input_video_path: str,
+        segment: VideoSegment,
+        output_path: str,
+        segment_index: int,
+        total_segments: int
+    ) -> str:
+        """
+        处理单个视频片段（支持GPU加速）
+        
+        Args:
+            input_video_path: 输入视频路径
+            segment: 视频片段信息
+            output_path: 输出路径
+            segment_index: 片段索引
+            total_segments: 总片段数
+            
+        Returns:
+            输出文件路径
+        """
+        # 构建单片段滤镜
+        start = f"{segment.start_sec:.6f}"
+        end = f"{segment.end_sec:.6f}"
+        ratio = f"{segment.slowdown_ratio:.6f}"
+        
+        # 使用两步setpts提高精度
+        if segment.needs_slowdown and self.enable_frame_interpolation:
+            filter_str = (
+                f"trim=start={start}:end={end},"
+                f"setpts=PTS-STARTPTS,setpts=PTS*{ratio},"
+                f"minterpolate=fps=60:mi_mode=mci"
+            )
+        else:
+            filter_str = (
+                f"trim=start={start}:end={end},"
+                f"setpts=PTS-STARTPTS,setpts=PTS*{ratio}"
+            )
         
         # 构建FFmpeg命令
         cmd = [self.ffmpeg_path, '-y']
@@ -585,25 +640,17 @@ class OptimizedVideoTimelineSyncProcessor:
         else:
             cmd.extend(['-threads', str(self.ffmpeg_threads)])
         
-        # 添加滤镜线程参数
-        cpu_count = os.cpu_count() or 4
-        filter_threads = max(2, cpu_count // self.max_parallel_batches)
-        cmd.extend([
-            '-filter_threads', str(filter_threads),
-            '-filter_complex_threads', str(filter_threads)
-        ])
-        
         # GPU加速输入参数
         cmd.extend(self._get_gpu_input_args())
         
         # 输入文件
         cmd.extend(['-i', input_video_path])
         
-        # 复杂滤镜链
-        cmd.extend(['-filter_complex', filter_chain])
+        # 视频滤镜
+        cmd.extend(['-vf', filter_str])
         
-        # 输出映射（只输出视频）
-        cmd.extend(['-map', '[outv]'])
+        # 移除音频
+        cmd.append('-an')
         
         # GPU加速输出参数
         cmd.extend(self._get_gpu_output_args())
@@ -612,27 +659,77 @@ class OptimizedVideoTimelineSyncProcessor:
         cmd.append(output_path)
         
         # 执行FFmpeg
+        subprocess.run(
+            cmd,
+            capture_output=True,
+            check=True,
+            encoding='utf-8',
+            errors='ignore'
+        )
+        
+        return output_path
+    
+    def _concat_segments_with_demuxer(
+        self,
+        segment_files: List[str],
+        output_path: str
+    ) -> str:
+        """
+        使用 concat demuxer 拼接片段（-c copy，不重新编码）
+        
+        Args:
+            segment_files: 片段文件路径列表
+            output_path: 输出路径
+            
+        Returns:
+            输出文件路径
+        """
+        import tempfile
+        
+        # 创建concat文件列表
+        concat_file = tempfile.NamedTemporaryFile(
+            mode='w',
+            suffix='.txt',
+            delete=False,
+            encoding='utf-8'
+        )
+        
         try:
-            result = subprocess.run(
+            for video in segment_files:
+                # 使用绝对路径并转换为Unix风格
+                abs_path = str(Path(video).resolve())
+                unix_path = abs_path.replace('\\', '/')
+                concat_file.write(f"file '{unix_path}'\n")
+            
+            concat_file.close()
+            
+            # 构建拼接命令
+            cmd = [
+                self.ffmpeg_path, '-y',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', concat_file.name,
+                '-c', 'copy',  # 直接复制，不重新编码
+                output_path
+            ]
+            
+            # 执行拼接
+            subprocess.run(
                 cmd,
                 capture_output=True,
                 check=True,
                 encoding='utf-8',
                 errors='ignore'
             )
-            print(f"   ✅ 批次 {batch_index+1} 处理完成 ({'GPU' if self.use_gpu else 'CPU'})")
+            
             return output_path
-        except subprocess.CalledProcessError as e:
-            # GPU失败时尝试回退到CPU
-            if self.use_gpu:
-                print(f"   ⚠️  GPU处理失败，尝试CPU回退...")
-                return self._process_batch_cpu_fallback(
-                    input_video_path, segments, output_path, batch_index, total_batches
-                )
-            print(f"   ❌ 批次 {batch_index+1} 处理失败: {e}")
-            if e.stderr:
-                print(f"   错误信息: {e.stderr[-500:]}")
-            raise
+            
+        finally:
+            # 清理临时文件
+            try:
+                Path(concat_file.name).unlink()
+            except:
+                pass
     
     def _process_batch_cpu_fallback(
         self,
@@ -645,28 +742,133 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         CPU回退处理（当GPU处理失败时）
         """
-        filter_chain = self._build_cpu_filter_chain(
-            segments,
-            enable_interpolation=self.enable_frame_interpolation
-        )
+        import tempfile
         
-        cmd = [self.ffmpeg_path, '-y']
-        cmd.extend(['-threads', '0'])
-        cmd.extend(['-i', input_video_path])
-        cmd.extend(['-filter_complex', filter_chain])
-        cmd.extend(['-map', '[outv]'])
-        cmd.extend([
-            '-c:v', 'libx264',
-            '-preset', self.quality_preset if self.quality_preset in 
-                ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow']
-                else 'medium',
-            '-crf', '23'
-        ])
-        cmd.append(output_path)
+        print(f"   使用CPU回退模式处理批次 {batch_index+1}")
         
-        subprocess.run(cmd, capture_output=True, check=True, encoding='utf-8', errors='ignore')
-        print(f"   ✅ 批次 {batch_index+1} CPU回退处理完成")
-        return output_path
+        # 创建临时目录
+        temp_dir = Path(tempfile.gettempdir()) / f"batch_cpu_{batch_index}_{id(self)}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # 逐个处理片段（CPU模式）
+            segment_files = []
+            for i, seg in enumerate(segments):
+                segment_output = str(temp_dir / f"segment_{i:04d}.mp4")
+                
+                # 构建单片段滤镜
+                start = f"{seg.start_sec:.6f}"
+                end = f"{seg.end_sec:.6f}"
+                ratio = f"{seg.slowdown_ratio:.6f}"
+                filter_str = f"trim=start={start}:end={end},setpts=PTS-STARTPTS,setpts=PTS*{ratio}"
+                
+                # CPU处理命令
+                cmd = [
+                    self.ffmpeg_path, '-y',
+                    '-i', input_video_path,
+                    '-vf', filter_str,
+                    '-an',
+                    '-c:v', 'libx264',
+                    '-preset', self.quality_preset if self.quality_preset in 
+                        ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow']
+                        else 'medium',
+                    '-crf', '23',
+                    segment_output
+                ]
+                
+                subprocess.run(cmd, capture_output=True, check=True, encoding='utf-8', errors='ignore')
+                segment_files.append(segment_output)
+            
+            # 拼接片段
+            self._concat_segments_with_demuxer(segment_files, output_path)
+            
+            print(f"   ✅ 批次 {batch_index+1} CPU回退处理完成")
+            return output_path
+            
+        finally:
+            # 清理临时文件
+            try:
+                import shutil
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+            except:
+                pass
+    
+    def _concatenate_batch_videos_only(
+        self,
+        batch_videos: List[str],
+        output_path: str
+    ) -> str:
+        """
+        仅拼接多个批次的视频（不添加音频）
+        
+        Args:
+            batch_videos: 批次视频文件路径列表
+            output_path: 输出视频路径
+            
+        Returns:
+            输出文件路径
+        """
+        print(f"\n🔗 拼接 {len(batch_videos)} 个批次视频（仅视频）...")
+        
+        # 创建concat文件列表
+        import tempfile
+        concat_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        
+        try:
+            for video in batch_videos:
+                # 使用绝对路径
+                abs_path = str(Path(video).resolve())
+                # 转换为Unix风格路径
+                unix_path = abs_path.replace('\\', '/')
+                concat_file.write(f"file '{unix_path}'\n")
+            
+            concat_file.close()
+            
+            # 构建拼接命令
+            cmd = [self.ffmpeg_path, '-y']
+            
+            # 输入concat文件
+            cmd.extend([
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', concat_file.name
+            ])
+            
+            # 编码设置（仅视频）
+            cmd.extend([
+                '-c:v', 'copy',  # 直接复制视频（已经编码过）
+                '-an'  # 移除音频
+            ])
+            
+            # 其他设置
+            cmd.extend([
+                '-movflags', '+faststart',
+                '-max_muxing_queue_size', '9999'
+            ])
+            
+            # 输出文件
+            cmd.append(output_path)
+            
+            # 执行拼接
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                check=True,
+                encoding='utf-8',
+                errors='ignore'
+            )
+            
+            print(f"   ✅ 拼接完成: {output_path}")
+            
+            return output_path
+            
+        finally:
+            # 清理临时文件
+            try:
+                Path(concat_file.name).unlink()
+            except:
+                pass
     
     def _concatenate_batch_videos(
         self,
@@ -685,9 +887,12 @@ class OptimizedVideoTimelineSyncProcessor:
         Returns:
             输出文件路径
         """
-        print(f"\n🔗 拼接 {len(batch_videos)} 个批次视频...")
+        print(f"\n🔗 拼接 {len(batch_videos)} 个批次视频并添加音频...")
         
-        # 创建concat文件列表
+        # 构建命令
+        cmd = [self.ffmpeg_path, '-y']
+        
+        # 输入视频（使用concat demuxer）
         import tempfile
         concat_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
         
@@ -700,9 +905,6 @@ class OptimizedVideoTimelineSyncProcessor:
                 concat_file.write(f"file '{unix_path}'\n")
             
             concat_file.close()
-            
-            # 构建拼接命令
-            cmd = [self.ffmpeg_path, '-y']
             
             # 输入concat文件
             cmd.extend([
@@ -827,7 +1029,12 @@ class OptimizedVideoTimelineSyncProcessor:
         background_volume: float = None
     ) -> str:
         """
-        分批并行处理视频（第二步优化：多线程并行）
+        分批并行处理视频（支持GPU加速）
+        
+        GPU加速说明：
+        - 每个批次独立使用GPU解码和编码
+        - 滤镜处理（trim/setpts/concat）在CPU执行
+        - 多批次并行可以充分利用GPU的编解码能力
         
         Args:
             input_video_path: 输入视频路径
@@ -866,9 +1073,10 @@ class OptimizedVideoTimelineSyncProcessor:
                     progress_callback(progress, f"处理批次 {completed_batches[0]}/{len(batches)}")
         
         try:
-            # 3. 并行处理批次（第二步优化核心）
+            # 3. 并行处理批次
             num_workers = min(len(batches), self.max_parallel_batches)
-            print(f"\n🚀 启动并行处理: {num_workers} 个工作线程处理 {len(batches)} 个批次")
+            mode_str = "GPU解码+编码" if self.use_gpu else "CPU"
+            print(f"\n🚀 启动并行处理: {num_workers} 个工作线程处理 {len(batches)} 个批次 ({mode_str})")
             
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 # 提交所有批次任务
@@ -901,13 +1109,85 @@ class OptimizedVideoTimelineSyncProcessor:
                 missing = [i for i, v in enumerate(batch_videos) if v is None]
                 raise RuntimeError(f"批次处理不完整，缺失批次: {missing}")
             
-            print(f"\n✅ 所有 {len(batches)} 个批次并行处理完成")
+            print(f"\n✅ 所有 {len(batches)} 个批次并行处理完成 ({mode_str})")
             
-            # 4. 处理环境声（如果提供）
+            # 4. 拼接所有批次视频（不添加音频）
+            if progress_callback:
+                progress_callback(70, "拼接批次视频")
+            
+            temp_video = str(temp_dir / "concatenated.mp4")
+            self._concatenate_batch_videos_only(batch_videos, temp_video)
+            
+            print(f"   ✅ 视频片段拼接完成 ({mode_str})")
+            
+            # 5. 全局时长校准
+            if progress_callback:
+                progress_callback(75, "全局时长校准")
+            
+            print("\n" + "="*60)
+            print("🎯 全局时长校准")
+            print("="*60)
+            
+            # 获取音频时长
+            audio_duration = self._get_video_duration(input_audio_path)
+            concat_video_duration = self._get_video_duration(temp_video)
+            
+            print(f"拼接后视频时长: {concat_video_duration:.2f}秒")
+            print(f"目标音频时长: {audio_duration:.2f}秒")
+            
+            duration_diff = audio_duration - concat_video_duration
+            print(f"时长差异: {duration_diff:+.2f}秒 ({abs(duration_diff)/60:.2f}分钟)")
+            
+            calibration_ratio = 1.0
+            
+            # 全局校准：修正拼接过程中的累积误差
+            # 降低阈值到0.05秒，确保即使小的差异也能被校准
+            if abs(duration_diff) > 0.05:
+                print(f"\n⚠️  时长差异（{abs(duration_diff):.2f}秒）超过阈值，进行全局校准")
+                
+                calibration_ratio = audio_duration / concat_video_duration
+                print(f"全局校准比例: {calibration_ratio:.4f}x")
+                
+                if duration_diff > 0:
+                    print(f"   视频比音频短 {duration_diff:.2f}秒 → 全局慢放 {calibration_ratio:.4f}x")
+                else:
+                    print(f"   视频比音频长 {abs(duration_diff):.2f}秒 → 全局加速 {calibration_ratio:.4f}x")
+                
+                calibrated_video = str(temp_dir / "calibrated_video.mp4")
+                print(f"   开始全局校准处理...")
+                
+                if self._calibrate_video_duration(temp_video, calibrated_video, calibration_ratio):
+                    temp_video = calibrated_video
+                    
+                    final_duration = self._get_video_duration(temp_video)
+                    final_diff = audio_duration - final_duration
+                    
+                    print(f"✅ 全局校准完成")
+                    print(f"   校准后视频时长: {final_duration:.2f}秒")
+                    print(f"   目标音频时长: {audio_duration:.2f}秒")
+                    print(f"   最终差异: {final_diff:+.3f}秒")
+                    
+                    if abs(final_diff) < 0.1:
+                        print(f"   ✅ 时长精确匹配（误差 < 0.1秒）")
+                    else:
+                        print(f"   ⚠️  仍有差异: {abs(final_diff):.2f}秒")
+                else:
+                    print(f"❌ 全局校准失败，使用原始拼接视频")
+                    print(f"   警告: 视频时长({concat_video_duration:.2f}s) 与 音频时长({audio_duration:.2f}s) 不匹配")
+                    print(f"   可能导致画面静止或音画不同步")
+                    calibration_ratio = 1.0
+            else:
+                print(f"✅ 时长差异在可接受范围内（{abs(duration_diff):.2f}秒 < 0.05秒）")
+            
+            # 6. 处理环境声（如果提供）
             mixed_audio_path = input_audio_path
             if background_audio_path:
                 if progress_callback:
-                    progress_callback(75, "处理环境声")
+                    progress_callback(85, "处理环境声")
+                
+                print("\n" + "="*60)
+                print("🎶 处理环境声")
+                print("="*60)
                 
                 mixed_audio_path = str(temp_dir / "mixed_audio.wav")
                 self._process_and_mix_background_audio(
@@ -915,26 +1195,61 @@ class OptimizedVideoTimelineSyncProcessor:
                     input_audio_path,
                     segments,
                     mixed_audio_path,
-                    background_volume
+                    background_volume,
+                    calibration_ratio
                 )
             
-            # 5. 拼接所有批次（按顺序）
+            # 7. 添加音频
             if progress_callback:
-                progress_callback(85, "拼接批次视频")
+                progress_callback(90, "添加音频")
             
-            result = self._concatenate_batch_videos(
-                batch_videos,
-                mixed_audio_path,
-                output_path
+            print("\n⚙️  添加音频...")
+            
+            cmd_audio = [self.ffmpeg_path, '-y']
+            
+            cmd_audio.extend([
+                '-i', temp_video,
+                '-i', mixed_audio_path
+            ])
+            
+            cmd_audio.extend([
+                '-map', '0:v',
+                '-map', '1:a'
+            ])
+            
+            cmd_audio.extend([
+                '-c:v', 'copy',
+                '-c:a', 'aac',
+                '-b:a', '192k'
+            ])
+            
+            cmd_audio.extend([
+                '-movflags', '+faststart',
+                '-max_muxing_queue_size', '9999'
+            ])
+            
+            cmd_audio.append(output_path)
+            
+            subprocess.run(
+                cmd_audio,
+                capture_output=True,
+                check=True,
+                encoding='utf-8',
+                errors='ignore'
             )
             
             if progress_callback:
                 progress_callback(100, "处理完成")
             
-            print(f"\n✅ 分批并行处理完成！")
+            print(f"\n✅ 分批并行处理完成！({mode_str})")
             print(f"   输出文件: {output_path}")
             
-            return result
+            output_file = Path(output_path)
+            if output_file.exists():
+                file_size_mb = output_file.stat().st_size / (1024 * 1024)
+                print(f"   文件大小: {file_size_mb:.2f} MB")
+            
+            return output_path
             
         finally:
             # 清理临时文件
@@ -958,6 +1273,10 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         一次性处理视频（支持GPU加速）
         
+        修复说明：
+        - 使用逐片段处理 + concat demuxer 替代 concat filter
+        - 避免 concat filter 重置 PTS 导致 setpts 失效
+        
         Args:
             input_video_path: 输入视频路径
             input_audio_path: 输入TTS音频路径
@@ -972,77 +1291,48 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         import tempfile
         
-        # 1. 构建复杂滤镜链
-        if progress_callback:
-            progress_callback(10, "构建滤镜链")
-        
-        filter_chain = self.build_complex_filter_chain(
-            segments,
-            enable_interpolation=self.enable_frame_interpolation
-        )
-        
-        # 2. 构建FFmpeg命令（先生成无音频的视频）
-        if progress_callback:
-            progress_callback(20, "准备FFmpeg命令")
-        
-        # 创建临时视频文件（无音频）
-        temp_video = Path(tempfile.gettempdir()) / f"temp_concat_{id(self)}.mp4"
+        # 创建临时目录
         temp_dir = Path(tempfile.gettempdir()) / f"video_sync_temp_{id(self)}"
         temp_dir.mkdir(parents=True, exist_ok=True)
         
-        cmd = [self.ffmpeg_path, '-y']
-        
-        # 添加多线程参数
-        if self.ffmpeg_threads == 0:
-            cmd.extend(['-threads', '0'])
-        else:
-            cmd.extend(['-threads', str(self.ffmpeg_threads)])
-        
-        # 添加滤镜线程参数
-        cpu_count = os.cpu_count() or 4
-        filter_threads = max(2, cpu_count // 2)
-        cmd.extend([
-            '-filter_threads', str(filter_threads),
-            '-filter_complex_threads', str(filter_threads)
-        ])
-        
-        # GPU加速输入参数
-        cmd.extend(self._get_gpu_input_args())
-        
-        # 输入文件
-        cmd.extend(['-i', input_video_path])
-        
-        # 复杂滤镜链
-        cmd.extend(['-filter_complex', filter_chain])
-        
-        # 输出映射（只输出视频）
-        cmd.extend(['-map', '[outv]'])
-        
-        # GPU加速输出参数
-        cmd.extend(self._get_gpu_output_args())
-        
-        # 输出文件
-        cmd.append(str(temp_video))
-        
-        # 3. 执行FFmpeg拼接
-        if progress_callback:
-            progress_callback(30, "执行FFmpeg处理")
-        
         mode_str = "GPU加速" if self.use_gpu else "CPU"
-        print(f"\n⚙️  执行FFmpeg拼接 ({mode_str})...")
+        print(f"\n⚙️  使用逐片段处理模式 ({mode_str})...")
         
         try:
-            subprocess.run(
-                cmd,
-                capture_output=True,
-                check=True,
-                encoding='utf-8',
-                errors='ignore'
-            )
-            
-            # 4. 全局时长校准
+            # 1. 逐个处理片段
             if progress_callback:
-                progress_callback(60, "全局时长校准")
+                progress_callback(10, "处理视频片段")
+            
+            segment_files = []
+            total = len(segments)
+            
+            for i, seg in enumerate(segments):
+                if progress_callback:
+                    progress = 10 + int(50 * (i / total))
+                    progress_callback(progress, f"处理片段 {i+1}/{total}")
+                
+                segment_output = str(temp_dir / f"segment_{i:04d}.mp4")
+                self._process_single_segment(
+                    input_video_path,
+                    seg,
+                    segment_output,
+                    i,
+                    total
+                )
+                segment_files.append(segment_output)
+            
+            # 2. 拼接所有片段
+            if progress_callback:
+                progress_callback(60, "拼接视频片段")
+            
+            temp_video = str(temp_dir / "concatenated.mp4")
+            self._concat_segments_with_demuxer(segment_files, temp_video)
+            
+            print(f"   ✅ 视频片段拼接完成 ({mode_str})")
+            
+            # 3. 全局时长校准
+            if progress_callback:
+                progress_callback(65, "全局时长校准")
             
             print("\n" + "="*60)
             print("🎯 全局时长校准")
@@ -1050,18 +1340,19 @@ class OptimizedVideoTimelineSyncProcessor:
             
             # 获取音频时长
             audio_duration = self._get_video_duration(input_audio_path)
-            concat_video_duration = self._get_video_duration(str(temp_video))
+            concat_video_duration = self._get_video_duration(temp_video)
             
             print(f"拼接后视频时长: {concat_video_duration:.2f}秒")
             print(f"目标音频时长: {audio_duration:.2f}秒")
             
             duration_diff = audio_duration - concat_video_duration
-            print(f"时长差异: {duration_diff:+.2f}秒")
+            print(f"时长差异: {duration_diff:+.2f}秒 ({abs(duration_diff)/60:.2f}分钟)")
             
             calibration_ratio = 1.0
             
             # 全局校准：修正拼接过程中的累积误差
-            if abs(duration_diff) > 0.1:
+            # 降低阈值到0.05秒，确保即使小的差异也能被校准
+            if abs(duration_diff) > 0.05:
                 print(f"\n⚠️  时长差异（{abs(duration_diff):.2f}秒）超过阈值，进行全局校准")
                 
                 calibration_ratio = audio_duration / concat_video_duration
@@ -1073,10 +1364,12 @@ class OptimizedVideoTimelineSyncProcessor:
                     print(f"   视频比音频长 {abs(duration_diff):.2f}秒 → 全局加速 {calibration_ratio:.4f}x")
                 
                 calibrated_video = temp_dir / "calibrated_video.mp4"
-                if self._calibrate_video_duration(str(temp_video), str(calibrated_video), calibration_ratio):
-                    temp_video = calibrated_video
+                print(f"   开始全局校准处理...")
+                
+                if self._calibrate_video_duration(temp_video, str(calibrated_video), calibration_ratio):
+                    temp_video = str(calibrated_video)
                     
-                    final_duration = self._get_video_duration(str(temp_video))
+                    final_duration = self._get_video_duration(temp_video)
                     final_diff = audio_duration - final_duration
                     
                     print(f"✅ 全局校准完成")
@@ -1086,13 +1379,17 @@ class OptimizedVideoTimelineSyncProcessor:
                     
                     if abs(final_diff) < 0.1:
                         print(f"   ✅ 时长精确匹配（误差 < 0.1秒）")
+                    else:
+                        print(f"   ⚠️  仍有差异: {abs(final_diff):.2f}秒")
                 else:
-                    print(f"⚠️  全局校准失败，使用原始拼接视频")
+                    print(f"❌ 全局校准失败，使用原始拼接视频")
+                    print(f"   警告: 视频时长({concat_video_duration:.2f}s) 与 音频时长({audio_duration:.2f}s) 不匹配")
+                    print(f"   可能导致画面静止或音画不同步")
                     calibration_ratio = 1.0
             else:
-                print(f"✅ 时长差异在可接受范围内（{abs(duration_diff):.2f}秒 < 0.1秒）")
+                print(f"✅ 时长差异在可接受范围内（{abs(duration_diff):.2f}秒 < 0.05秒）")
             
-            # 5. 处理环境声（如果提供）
+            # 4. 处理环境声（如果提供）
             final_audio_path = input_audio_path
             if background_audio_path:
                 if progress_callback:
@@ -1112,7 +1409,7 @@ class OptimizedVideoTimelineSyncProcessor:
                     calibration_ratio
                 )
             
-            # 6. 添加音频
+            # 5. 添加音频
             if progress_callback:
                 progress_callback(85, "添加音频")
             
@@ -1121,7 +1418,7 @@ class OptimizedVideoTimelineSyncProcessor:
             cmd_audio = [self.ffmpeg_path, '-y']
             
             cmd_audio.extend([
-                '-i', str(temp_video),
+                '-i', temp_video,
                 '-i', final_audio_path
             ])
             
