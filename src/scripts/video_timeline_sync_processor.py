@@ -75,9 +75,9 @@ class VideoTimelineSyncProcessor:
         updated_audio_path: str,
         updated_srt_path: str,
         output_dir: str,
-        max_slowdown_ratio: float = 2.0,
+        max_slowdown_ratio: float = 0,
         quality_preset: str = "medium",
-        enable_frame_interpolation: bool = True,
+        enable_frame_interpolation: bool = False,
         include_gaps: bool = True,
         slowdown_start_index: int = 1,
         use_gpu: bool = False,
@@ -370,9 +370,100 @@ class VideoTimelineSyncProcessor:
         
         return cmd
     
+    def _detect_encoding(self, file_path: Path) -> str:
+        """
+        检测文件编码（不依赖外部库）
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            检测到的编码名称
+        """
+        # 读取文件的前几个字节来检测编码
+        with open(file_path, 'rb') as f:
+            raw_data = f.read(10000)  # 读取前10KB
+        
+        if len(raw_data) == 0:
+            return 'utf-8'
+        
+        # 检查BOM标记（最可靠的方法）
+        # 检查文件开头
+        if raw_data.startswith(b'\xff\xfe'):
+            # UTF-16 LE BOM
+            return 'utf-16-le'
+        elif raw_data.startswith(b'\xfe\xff'):
+            # UTF-16 BE BOM
+            return 'utf-16-be'
+        elif raw_data.startswith(b'\xef\xbb\xbf'):
+            # UTF-8 BOM
+            return 'utf-8-sig'
+        
+        # 检查是否包含UTF-16特征字节（0xff 0xfe 或 0xfe 0xff）
+        # 即使不在开头，如果文件中有这些模式，也可能是UTF-16
+        if b'\xff\xfe' in raw_data[:100] or b'\xfe\xff' in raw_data[:100]:
+            # 检查null字节模式（UTF-16通常有很多null字节）
+            null_count = raw_data[:100].count(b'\x00')
+            if null_count > 10:  # 如果前100字节中有超过10个null字节，很可能是UTF-16
+                # 尝试判断是LE还是BE
+                # UTF-16 LE: 偶数位置通常是ASCII字符，奇数位置是0x00
+                # UTF-16 BE: 奇数位置通常是ASCII字符，偶数位置是0x00
+                try:
+                    # 尝试UTF-16 LE
+                    test_le = raw_data[:200].decode('utf-16-le', errors='strict')
+                    # 如果成功且包含可打印字符，很可能是UTF-16 LE
+                    if any(c.isprintable() for c in test_le[:50]):
+                        return 'utf-16-le'
+                except:
+                    pass
+                
+                try:
+                    # 尝试UTF-16 BE
+                    test_be = raw_data[:200].decode('utf-16-be', errors='strict')
+                    if any(c.isprintable() for c in test_be[:50]):
+                        return 'utf-16-be'
+                except:
+                    pass
+        
+        # 尝试使用chardet（如果可用）
+        try:
+            import chardet
+            result = chardet.detect(raw_data)
+            detected_encoding = result.get('encoding', 'utf-8')
+            confidence = result.get('confidence', 0)
+            
+            if confidence >= 0.7:
+                # 标准化编码名称
+                if detected_encoding.lower() in ['utf-16', 'utf16']:
+                    # chardet可能返回'UTF-16'，需要指定LE或BE
+                    # 默认使用LE（更常见）
+                    return 'utf-16-le'
+                return detected_encoding
+        except ImportError:
+            pass  # chardet不可用，继续使用其他方法
+        except Exception:
+            pass  # chardet检测失败，继续使用其他方法
+        
+        # 尝试常见编码，找到第一个能成功解码的
+        # 优先尝试UTF-16（因为错误信息显示可能是UTF-16）
+        common_encodings = ['utf-16-le', 'utf-16-be', 'utf-8', 'utf-8-sig', 'gbk', 'gb2312', 'big5', 'latin1']
+        for encoding in common_encodings:
+            try:
+                # 尝试解码前1000字节
+                test_data = raw_data[:min(1000, len(raw_data))]
+                decoded = test_data.decode(encoding)
+                # 检查是否包含可打印字符（避免误判）
+                if any(c.isprintable() for c in decoded[:50]):
+                    return encoding
+            except (UnicodeDecodeError, LookupError):
+                continue
+        
+        # 默认返回utf-8
+        return 'utf-8'
+    
     def parse_srt(self, srt_path: Path) -> List[SubtitleEntry]:
         """
-        解析SRT文件
+        解析SRT文件（自动检测编码）
         
         Args:
             srt_path: SRT文件路径
@@ -382,8 +473,60 @@ class VideoTimelineSyncProcessor:
         """
         print(f"📖 解析SRT文件: {srt_path}")
         
-        with open(srt_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+        # 尝试多种编码方式
+        encodings_to_try = []
+        
+        # 首先尝试自动检测
+        try:
+            detected_encoding = self._detect_encoding(srt_path)
+            encodings_to_try.append(detected_encoding)
+            print(f"   检测到编码: {detected_encoding}")
+        except Exception as e:
+            print(f"   编码检测失败: {e}，使用默认编码列表")
+        
+        # 添加常见编码作为备选
+        common_encodings = ['utf-8', 'utf-8-sig', 'utf-16', 'utf-16-le', 'utf-16-be', 'gbk', 'gb2312', 'big5', 'latin1']
+        for enc in common_encodings:
+            if enc not in encodings_to_try:
+                encodings_to_try.append(enc)
+        
+        content = None
+        used_encoding = None
+        
+        # 尝试每种编码
+        for encoding in encodings_to_try:
+            try:
+                with open(srt_path, 'r', encoding=encoding, errors='strict') as f:
+                    content = f.read()
+                # 验证内容是否合理（至少包含一些可打印字符）
+                if len(content) > 0 and any(c.isprintable() for c in content[:100]):
+                    used_encoding = encoding
+                    print(f"   ✅ 成功使用编码: {encoding}")
+                    break
+                else:
+                    # 内容不合理，继续尝试下一个编码
+                    content = None
+                    continue
+            except (UnicodeDecodeError, LookupError) as e:
+                continue
+            except Exception as e:
+                # 其他异常（如文件不存在等），记录但不中断
+                print(f"   ⚠️  编码 {encoding} 尝试失败: {e}")
+                continue
+        
+        # 如果所有编码都失败，使用错误处理模式
+        if content is None:
+            print(f"   ⚠️  所有编码尝试失败，使用错误处理模式")
+            try:
+                with open(srt_path, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+                used_encoding = 'utf-8 (with error replacement)'
+                print(f"   ⚠️  使用UTF-8（错误替换模式），可能有字符丢失")
+            except Exception as e:
+                raise ValueError(f"无法读取SRT文件 {srt_path}: {e}")
+        
+        if used_encoding:
+            print(f"   最终使用编码: {used_encoding}")
         
         # 标准化换行符
         content = content.replace('\r\n', '\n').replace('\r', '\n')
