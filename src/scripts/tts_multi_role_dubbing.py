@@ -28,7 +28,7 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                  enable_smart_speedup=False, enable_audio_speedup=True,
                  enable_video_slowdown=False, max_audio_speed_rate=2.0,
                  max_video_pts_rate=10.0, remove_silent_gaps=False,
-                 preserve_total_time=True):
+                 preserve_total_time=False):  # 默认不保持总时长，保持原始间隔
         """
         初始化多角色配音处理器
         
@@ -297,6 +297,13 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
         if total_subtitles == 0:
             raise ValueError("SRT文件中没有字幕")
         
+        # 1.5. 智能语速优化：如果启用保持总时长且使用默认语速，自动提升到1.2
+        original_speed_factor = self.speed_factor
+        if self.preserve_total_time and abs(self.speed_factor - 1.0) < 0.01:
+            self.speed_factor = 1.2
+            print(f"\n🚀 智能语速优化: {original_speed_factor} → {self.speed_factor} (保持总时长模式)")
+            print(f"   这将加快TTS生成速度，减少后期调整时间\n")
+        
         print(f"PROGRESS:10%")
         
         # 2. 验证角色配置
@@ -361,11 +368,15 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
             
             from timeline_adjuster import TimelineAdjuster
             
+            print(f"📊 TTS生成语速: {self.speed_factor}x")
+            
             # 使用TimelineAdjuster动态调整时间轴
             timeline_adjuster = TimelineAdjuster(
                 subtitles=subtitle_data,
                 audio_files=audio_files,
-                preserve_total_time=True
+                preserve_total_time=True,
+                target_speed_factor=self.speed_factor,
+                max_speed_limit=2.0
             )
             
             # 调整时间轴
@@ -403,9 +414,9 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                             last_end_time += natural_pause
                     else:
                         # 保留时间轴模式：添加完整的静音间隙
-                        print(f"  ⏸️  添加静音: {silence_duration}ms")
+                        print(f"  ⏸️  添加原始间隙: {silence_duration}ms")
                         audio_segments.append(self.create_silence(silence_duration))
-                        last_end_time += silence_duration
+                        last_end_time = start_ms
                 
                 # 加载音频
                 audio = AudioSegment.from_wav(subtitle_info['audio_file'])
@@ -425,11 +436,19 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
                 audio_segments.append(audio)
                 last_end_time += len(audio)
                 
-                # 添加字幕间隔静音（仅在不移除静音间隙时）
+                # 添加字幕间隔静音（仅在没有原始间隙时）
                 if not self.remove_silent_gaps and i < len(subtitle_data) - 1:
-                    silence_ms = int(self.silence_duration * 1000)
-                    audio_segments.append(self.create_silence(silence_ms))
-                    last_end_time += silence_ms
+                    # 检查下一条字幕是否有原始间隙
+                    next_subtitle = subtitle_data[i + 1]
+                    next_start_ms = next_subtitle['start_ms']
+                    
+                    if next_start_ms <= end_ms:
+                        # 没有原始间隙，添加静音间隔
+                        silence_ms = int(self.silence_duration * 1000)
+                        audio_segments.append(self.create_silence(silence_ms))
+                        last_end_time += silence_ms
+                        print(f"  ⏸️  添加字幕间隔静音: {silence_ms}ms")
+                    # 如果有原始间隙，会在下一次循环开始时添加
             
             # 拼接所有音频
             if not audio_segments:
@@ -446,13 +465,19 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
             final_audio.export(output_path, format="wav")
             output_path = str(output_path)
             
-            # 生成精确字幕（方案B - 基于实际音频片段时长）
+            # 生成字幕文件
             updated_srt_path = None
             if self.remove_silent_gaps:
-                # 使用方案B：基于每个片段的实际时长生成精确字幕
+                # 方案B：基于实际音频片段时长生成精确字幕（移除间隙）
                 updated_srt_path = self._generate_precise_subtitle_from_segments(
                     subtitle_data,
                     min_gap_ms=300  # 片段之间保留300ms间隙
+                )
+            else:
+                # 方案D：传统模式 - 根据实际拼接的音频生成字幕
+                updated_srt_path = self._generate_traditional_subtitle(
+                    subtitle_data,
+                    silence_duration_ms=int(self.silence_duration * 1000)
                 )
         
         print(f"PROGRESS:90%")
