@@ -473,6 +473,36 @@ class VideoTimelineSyncProcessor:
         """
         print(f"📖 解析SRT文件: {srt_path}")
         
+        # 检查文件是否存在
+        srt_path = Path(srt_path)
+        if not srt_path.exists():
+            print(f"   ❌ 文件不存在: {srt_path}")
+            return []
+        
+        # 读取原始字节用于调试
+        try:
+            with open(srt_path, 'rb') as f:
+                raw_bytes = f.read()
+            print(f"   📊 文件大小: {len(raw_bytes)} 字节")
+            if len(raw_bytes) > 0:
+                # 打印前50个字节的十六进制表示
+                hex_preview = raw_bytes[:50].hex(' ')
+                print(f"   📊 前50字节(hex): {hex_preview}")
+                # 检查BOM
+                if raw_bytes.startswith(b'\xef\xbb\xbf'):
+                    print(f"   📊 检测到UTF-8 BOM")
+                elif raw_bytes.startswith(b'\xff\xfe'):
+                    print(f"   📊 检测到UTF-16 LE BOM")
+                elif raw_bytes.startswith(b'\xfe\xff'):
+                    print(f"   📊 检测到UTF-16 BE BOM")
+        except Exception as e:
+            print(f"   ⚠️  读取原始字节失败: {e}")
+            raw_bytes = b''
+        
+        if len(raw_bytes) == 0:
+            print(f"   ❌ 文件为空")
+            return []
+        
         # 尝试多种编码方式
         encodings_to_try = []
         
@@ -493,18 +523,32 @@ class VideoTimelineSyncProcessor:
         content = None
         used_encoding = None
         
+        # SRT格式验证函数
+        def is_valid_srt_content(text: str) -> bool:
+            """
+            验证内容是否像有效的SRT文件
+            检查是否包含SRT时间轴格式: 00:00:00,000 --> 00:00:00,000
+            """
+            import re
+            # 检查是否包含SRT时间轴格式
+            time_pattern = r'\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}'
+            if re.search(time_pattern, text[:2000]):  # 只检查前2000字符
+                return True
+            return False
+        
         # 尝试每种编码
         for encoding in encodings_to_try:
             try:
                 with open(srt_path, 'r', encoding=encoding, errors='strict') as f:
                     content = f.read()
-                # 验证内容是否合理（至少包含一些可打印字符）
-                if len(content) > 0 and any(c.isprintable() for c in content[:100]):
+                # 验证内容是否是有效的SRT格式
+                if len(content) > 0 and is_valid_srt_content(content):
                     used_encoding = encoding
                     print(f"   ✅ 成功使用编码: {encoding}")
                     break
                 else:
-                    # 内容不合理，继续尝试下一个编码
+                    # 内容不是有效SRT格式，继续尝试下一个编码
+                    print(f"   ⚠️  编码 {encoding} 读取成功但内容不是有效SRT格式")
                     content = None
                     continue
             except (UnicodeDecodeError, LookupError) as e:
@@ -607,6 +651,14 @@ class VideoTimelineSyncProcessor:
         
         original_entries = self.parse_srt(self.original_srt_path)
         updated_entries = self.parse_srt(self.updated_srt_path)
+        
+        # 检查解析结果是否为空
+        if not original_entries:
+            print(f"❌ 原始SRT解析结果为空: {self.original_srt_path}")
+            return []
+        if not updated_entries:
+            print(f"❌ 更新SRT解析结果为空: {self.updated_srt_path}")
+            return []
         
         if len(original_entries) != len(updated_entries):
             print(f"⚠️ 警告: 字幕数量不一致")

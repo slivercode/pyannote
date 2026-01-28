@@ -794,7 +794,7 @@ class OptimizedVideoTimelineSyncProcessor:
         start_time = time.time()
         
         print("\n" + "=" * 60)
-        print("� 优化处理模式")
+        print("🚀 优化处理模式")
         print("=" * 60)
         print(f"📹 输入视频: {input_video_path}")
         print(f"🎵 输入TTS音频: {input_audio_path}")
@@ -803,6 +803,10 @@ class OptimizedVideoTimelineSyncProcessor:
             print(f"🎶 环境声: {background_audio_path} (音量: {vol * 100:.0f}%)")
         print(f"📊 片段数量: {len(segments)}")
         print(f"💾 输出路径: {output_path}")
+        
+        # 检查 segments 是否为空
+        if not segments:
+            raise ValueError("segments 列表为空，无法处理视频。请检查输入的字幕文件是否有效。")
 
         # 判断是否需要分批处理
         result_path = None
@@ -868,6 +872,14 @@ class OptimizedVideoTimelineSyncProcessor:
             输出文件路径
         """
         import tempfile
+        
+        # 检查 segments 是否为空
+        if not segments:
+            raise ValueError(
+                f"segments 列表为空，无法处理视频。\n"
+                f"输入视频: {input_video_path}\n"
+                f"请检查输入的字幕文件是否有效。"
+            )
 
         # 1. 分割片段
         if progress_callback:
@@ -997,6 +1009,14 @@ class OptimizedVideoTimelineSyncProcessor:
             输出文件路径
         """
         import tempfile
+        
+        # 检查 segments 是否为空
+        if not segments:
+            raise ValueError(
+                f"segments 列表为空，无法处理视频。\n"
+                f"输入视频: {input_video_path}\n"
+                f"请检查输入的字幕文件是否有效。"
+            )
 
         # 1. 构建复杂滤镜链
         if progress_callback:
