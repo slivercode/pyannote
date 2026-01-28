@@ -534,23 +534,36 @@ class VideoTimelineSyncProcessor:
         entries = []
         blocks = re.split(r'\n\n+', content.strip())
         
+        print(f"   📊 分割后的块数: {len(blocks)}")
+        if len(blocks) > 0:
+            # 打印第一个块的内容用于调试
+            first_block_preview = blocks[0][:200] if len(blocks[0]) > 200 else blocks[0]
+            print(f"   📝 第一个块预览: {repr(first_block_preview)}")
+        
         time_pattern = re.compile(r'(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})')
         
+        skipped_blocks = 0
         for block in blocks:
             lines = [line.strip() for line in block.split('\n') if line.strip()]
             
             if len(lines) < 3:
+                skipped_blocks += 1
                 continue
             
             # 解析序号
             try:
                 index = int(lines[0])
             except ValueError:
+                skipped_blocks += 1
                 continue
             
             # 解析时间轴
             time_match = time_pattern.match(lines[1])
             if not time_match:
+                skipped_blocks += 1
+                if len(entries) == 0:
+                    # 第一个块解析失败时打印调试信息
+                    print(f"   ⚠️  时间轴解析失败: {repr(lines[1][:100] if len(lines[1]) > 100 else lines[1])}")
                 continue
             
             # 提取时间
@@ -574,6 +587,9 @@ class VideoTimelineSyncProcessor:
                 duration_ms=end_total_ms - start_total_ms,
                 text=text
             ))
+        
+        if skipped_blocks > 0:
+            print(f"   ⚠️  跳过了 {skipped_blocks} 个无效块")
         
         print(f"✅ 解析完成: {len(entries)} 条字幕")
         return entries
@@ -1357,8 +1373,11 @@ class VideoTimelineSyncProcessor:
         4. 拼接所有片段
         
         Returns:
-            处理结果字典
+            处理结果字典（包含处理时间）
         """
+        import time
+        start_time = time.time()
+        
         print("\n" + "="*60)
         print("🎬 视频时间轴同步处理器")
         print("="*60)
@@ -1464,26 +1483,41 @@ class VideoTimelineSyncProcessor:
             print("\n🧹 清理临时文件...")
             shutil.rmtree(self.temp_dir)
             
+            # 计算处理时间
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
             print("\n" + "="*60)
             print("✅ 处理完成！")
             print("="*60)
             print(f"输出文件: {final_output}")
+            print(f"⏱️  总处理时间: {processing_time:.2f}秒 ({processing_time/60:.2f}分钟)")
             
             return {
                 'success': True,
                 'output_path': str(final_output),
                 'timeline_diffs': len(timeline_diffs),
-                'segments_processed': len(processed_segments)
+                'segments_processed': len(processed_segments),
+                'processing_time_seconds': processing_time,
+                'processing_time_minutes': processing_time / 60,
+                'mode': 'standard'
             }
             
         except Exception as e:
+            # 计算处理时间（即使失败）
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
             print(f"\n❌ 处理失败: {e}")
+            print(f"⏱️  处理时间: {processing_time:.2f}秒")
             import traceback
             traceback.print_exc()
             
             return {
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'processing_time_seconds': processing_time,
+                'processing_time_minutes': processing_time / 60
             }
     
     def _cut_by_original_srt(self, timeline_diffs: List[TimelineDiff]) -> List[Path]:

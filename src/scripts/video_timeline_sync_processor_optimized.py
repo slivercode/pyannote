@@ -14,6 +14,7 @@
 import subprocess
 import json
 import os
+import time
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
@@ -329,6 +330,10 @@ class OptimizedVideoTimelineSyncProcessor:
         Returns:
             FFmpeg滤镜字符串
         """
+        # 检查 segments 是否为空
+        if not segments:
+            raise ValueError("segments 列表为空，无法构建滤镜链。请检查输入的字幕文件是否有效。")
+        
         filter_parts = []
         stream_labels = []
 
@@ -389,6 +394,10 @@ class OptimizedVideoTimelineSyncProcessor:
         Returns:
             FFmpeg滤镜字符串
         """
+        # 检查 segments 是否为空
+        if not segments:
+            raise ValueError("segments 列表为空，无法构建滤镜链。请检查输入的字幕文件是否有效。")
+        
         filter_parts = []
         stream_labels = []
 
@@ -766,7 +775,7 @@ class OptimizedVideoTimelineSyncProcessor:
             progress_callback=None,
             background_audio_path: str = None,
             background_volume: float = None
-    ) -> str:
+    ) -> Dict[str, any]:
         """
         优化的视频处理流程（支持分批处理和环境声混合）
 
@@ -780,8 +789,10 @@ class OptimizedVideoTimelineSyncProcessor:
             background_volume: 可选，环境声音量（0.0-1.0），默认使用初始化时的设置
 
         Returns:
-            输出文件路径
+            包含输出路径和处理时间的字典
         """
+        start_time = time.time()
+        
         print("\n" + "=" * 60)
         print("� 优化处理模式")
         print("=" * 60)
@@ -794,9 +805,10 @@ class OptimizedVideoTimelineSyncProcessor:
         print(f"💾 输出路径: {output_path}")
 
         # 判断是否需要分批处理
+        result_path = None
         if self._should_use_batch_processing(segments):
             print(f"\n⚠️  片段数量({len(segments)})超过阈值({self.max_segments_per_batch})，使用分批处理模式")
-            return self._process_video_in_batches(
+            result_path = self._process_video_in_batches(
                 input_video_path,
                 input_audio_path,
                 segments,
@@ -807,7 +819,7 @@ class OptimizedVideoTimelineSyncProcessor:
             )
         else:
             print(f"\n✅ 片段数量({len(segments)})在阈值内，使用一次性处理模式")
-            return self._process_video_single_pass(
+            result_path = self._process_video_single_pass(
                 input_video_path,
                 input_audio_path,
                 segments,
@@ -816,6 +828,19 @@ class OptimizedVideoTimelineSyncProcessor:
                 background_audio_path,
                 background_volume
             )
+        
+        # 计算处理时间
+        end_time = time.time()
+        processing_time = end_time - start_time
+        
+        print(f"\n⏱️  总处理时间: {processing_time:.2f}秒 ({processing_time/60:.2f}分钟)")
+        
+        return {
+            'output_path': result_path,
+            'processing_time_seconds': processing_time,
+            'processing_time_minutes': processing_time / 60,
+            'mode': 'optimized'
+        }
 
     def _process_video_in_batches(
             self,

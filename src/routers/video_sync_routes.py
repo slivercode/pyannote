@@ -274,8 +274,37 @@ async def start_video_sync(request: VideoSyncRequest):
                 # 优化模式：使用复杂滤镜链一次性处理
                 print("🚀 执行优化处理流程...")
                 
+                # 打印文件路径信息用于调试
+                print(f"📁 原始SRT路径: {original_srt_path}")
+                print(f"📁 更新SRT路径: {updated_srt_path}")
+                print(f"📁 原始SRT存在: {original_srt_path.exists() if original_srt_path else 'N/A'}")
+                print(f"📁 更新SRT存在: {updated_srt_path.exists() if updated_srt_path else 'N/A'}")
+                
+                if original_srt_path and original_srt_path.exists():
+                    print(f"📁 原始SRT大小: {original_srt_path.stat().st_size} 字节")
+                if updated_srt_path and updated_srt_path.exists():
+                    print(f"📁 更新SRT大小: {updated_srt_path.stat().st_size} 字节")
+                
                 # 1. 分析时间轴差异
                 timeline_diffs = analyzer.analyze_timeline_diff()
+                
+                print(f"📊 时间轴差异数量: {len(timeline_diffs) if timeline_diffs else 0}")
+                
+                # 检查 timeline_diffs 是否为空
+                if not timeline_diffs:
+                    error_msg = "时间轴分析失败：原始字幕或更新后字幕可能为空或格式不正确"
+                    # 添加更多调试信息
+                    if original_srt_path and original_srt_path.exists():
+                        error_msg += f"\n原始SRT文件大小: {original_srt_path.stat().st_size} 字节"
+                    if updated_srt_path and updated_srt_path.exists():
+                        error_msg += f"\n更新SRT文件大小: {updated_srt_path.stat().st_size} 字节"
+                    
+                    with task_lock:
+                        video_sync_tasks[task_id]["status"] = "failed"
+                        video_sync_tasks[task_id]["progress"] = 0
+                        video_sync_tasks[task_id]["stage"] = "错误"
+                        video_sync_tasks[task_id]["error"] = error_msg
+                    return
                 
                 # 2. 获取视频时长
                 video_duration = analyzer._get_video_duration()
@@ -287,6 +316,15 @@ async def start_video_sync(request: VideoSyncRequest):
                     original_video_duration=video_duration,
                     include_gaps=request.include_gaps
                 )
+                
+                # 检查 segments 是否为空
+                if not segments:
+                    with task_lock:
+                        video_sync_tasks[task_id]["status"] = "failed"
+                        video_sync_tasks[task_id]["progress"] = 0
+                        video_sync_tasks[task_id]["stage"] = "错误"
+                        video_sync_tasks[task_id]["error"] = "无法生成视频片段：字幕文件可能为空或格式不正确"
+                    return
                 
                 # 4. 估算处理时间
                 estimate = processor.estimate_processing_time(
@@ -305,7 +343,7 @@ async def start_video_sync(request: VideoSyncRequest):
                         video_sync_tasks[task_id]["progress"] = progress
                         video_sync_tasks[task_id]["stage"] = message
                 
-                processor.process_video_optimized(
+                process_result = processor.process_video_optimized(
                     input_video_path=str(original_video_path),
                     input_audio_path=str(updated_audio_path),
                     segments=segments,
@@ -315,13 +353,25 @@ async def start_video_sync(request: VideoSyncRequest):
                     background_volume=request.background_audio_volume if request.enable_background_audio else None
                 )
                 
-                result = {
-                    'success': True,
-                    'output_path': str(output_path),
-                    'segments_processed': len(segments),
-                    'mode': 'optimized',
-                    'background_audio_mixed': background_audio_path is not None
-                }
+                # 处理返回结果（可能是字典或字符串）
+                if isinstance(process_result, dict):
+                    result = {
+                        'success': True,
+                        'output_path': process_result.get('output_path', str(output_path)),
+                        'segments_processed': len(segments),
+                        'mode': 'optimized',
+                        'background_audio_mixed': background_audio_path is not None,
+                        'processing_time_seconds': process_result.get('processing_time_seconds', 0),
+                        'processing_time_minutes': process_result.get('processing_time_minutes', 0)
+                    }
+                else:
+                    result = {
+                        'success': True,
+                        'output_path': str(process_result) if process_result else str(output_path),
+                        'segments_processed': len(segments),
+                        'mode': 'optimized',
+                        'background_audio_mixed': background_audio_path is not None
+                    }
             else:
                 # 标准模式：多次FFmpeg调用
                 print("💻 执行标准处理流程...")
@@ -339,6 +389,9 @@ async def start_video_sync(request: VideoSyncRequest):
                     video_sync_tasks[task_id]["segments_processed"] = result.get('segments_processed', 0)
                     video_sync_tasks[task_id]["processing_mode"] = result.get('mode', 'unknown')
                     video_sync_tasks[task_id]["completed_at"] = datetime.now().isoformat()
+                    # 添加处理时间信息
+                    video_sync_tasks[task_id]["processing_time_seconds"] = result.get('processing_time_seconds', 0)
+                    video_sync_tasks[task_id]["processing_time_minutes"] = result.get('processing_time_minutes', 0)
                     # 生成下载URL
                     output_filename = os.path.basename(result['output_path'])
                     video_sync_tasks[task_id]["download_url"] = f"/output/video_sync_{task_id}/{output_filename}"
@@ -411,11 +464,45 @@ async def analyze_timeline_diff(
         original_srt_path = input_dir / f"temp_original_{generate_task_id()}.srt"
         updated_srt_path = input_dir / f"temp_updated_{generate_task_id()}.srt"
         
+        # 读取上传的文件内容
+        original_content = await original_srt.read()
+        updated_content = await updated_srt.read()
+        
+        print(f"📁 原始SRT文件大小: {len(original_content)} 字节")
+        print(f"📁 更新SRT文件大小: {len(updated_content)} 字节")
+        
+        # 检查文件内容是否为空
+        if len(original_content) == 0:
+            return {
+                "success": False,
+                "error": "原始SRT文件内容为空"
+            }
+        if len(updated_content) == 0:
+            return {
+                "success": False,
+                "error": "更新后的SRT文件内容为空"
+            }
+        
         with open(original_srt_path, "wb") as f:
-            f.write(await original_srt.read())
+            f.write(original_content)
         
         with open(updated_srt_path, "wb") as f:
-            f.write(await updated_srt.read())
+            f.write(updated_content)
+        
+        # 验证文件是否成功写入
+        if not original_srt_path.exists():
+            return {
+                "success": False,
+                "error": f"原始SRT文件写入失败: {original_srt_path}"
+            }
+        if not updated_srt_path.exists():
+            return {
+                "success": False,
+                "error": f"更新SRT文件写入失败: {updated_srt_path}"
+            }
+        
+        print(f"✅ 文件已保存: {original_srt_path} ({original_srt_path.stat().st_size} 字节)")
+        print(f"✅ 文件已保存: {updated_srt_path} ({updated_srt_path.stat().st_size} 字节)")
         
         # 导入处理器
         sys.path.insert(0, str(scripts_dir))
