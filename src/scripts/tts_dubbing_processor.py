@@ -322,21 +322,52 @@ class TTSDubbingProcessor:
         print(f"   参考文本: {params['prompt_text'][:30]}...")
         print(f"   参考语言: {prompt_lang}")  # 重点：检查这个是否正确
         
-        # 发送请求
-        response = requests.get(api_url, params=params, timeout=60)
-        response.raise_for_status()
+        # 发送请求（带重试和失败处理）
+        max_retries = 2
+        last_error = None
         
-        # 保存音频
-        with open(output_path, 'wb') as f:
-            f.write(response.content)
+        for retry in range(max_retries + 1):
+            try:
+                response = requests.get(api_url, params=params, timeout=60)
+                response.raise_for_status()
+                
+                # 保存音频
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+                
+                # 验证最终时长
+                if target_duration_ms:
+                    audio_final = AudioSegment.from_file(str(output_path))
+                    final_duration = len(audio_final)
+                    print(f"✅ 语音合成成功: {output_path.name}, 时长: {final_duration}ms (目标: {target_duration_ms}ms)")
+                else:
+                    print(f"✅ 语音合成成功: {output_path.name}")
+                
+                return str(output_path)
+                
+            except requests.exceptions.HTTPError as e:
+                last_error = e
+                if retry < max_retries:
+                    print(f"⚠️ API请求失败 (HTTP {e.response.status_code})，重试 {retry+1}/{max_retries}...")
+                    time.sleep(1)
+                else:
+                    print(f"❌ 合成语音失败 (字幕{text[:20]}...): {e}")
+                    print(f"   返回内容: {e.response.text[:200] if e.response else 'N/A'}...")
+                    
+            except Exception as e:
+                last_error = e
+                if retry < max_retries:
+                    print(f"⚠️ 合成失败: {e}，重试 {retry+1}/{max_retries}...")
+                    time.sleep(1)
+                else:
+                    print(f"❌ 合成语音失败 (字幕{text[:20]}...): {e}")
         
-        # 验证最终时长
-        if target_duration_ms:
-            audio_final = AudioSegment.from_file(str(output_path))
-            final_duration = len(audio_final)
-            print(f"✅ 语音合成成功: {output_path.name}, 时长: {final_duration}ms (目标: {target_duration_ms}ms)")
-        else:
-            print(f"✅ 语音合成成功: {output_path.name}")
+        # 所有重试都失败，生成静音占位音频
+        print(f"⚠️ TTS合成失败，生成静音占位音频以保持时间轴同步")
+        duration_ms = target_duration_ms if target_duration_ms else 1000
+        silence = AudioSegment.silent(duration=duration_ms)
+        silence.export(output_path, format="wav")
+        print(f"   🔇 静音占位: {output_path.name}, 时长: {duration_ms}ms")
         
         return str(output_path)
     
@@ -425,7 +456,13 @@ class TTSDubbingProcessor:
                 
         except Exception as e:
             print(f"❌ Qwen TTS合成失败: {e}")
-            raise
+            # 生成静音占位音频以保持时间轴同步
+            print(f"⚠️ 生成静音占位音频以保持时间轴同步")
+            duration_ms = target_duration_ms if target_duration_ms else 1000
+            silence = AudioSegment.silent(duration=duration_ms)
+            silence.export(output_path, format="wav")
+            print(f"   🔇 静音占位: {output_path.name}, 时长: {duration_ms}ms")
+            return str(output_path)
     
     def _select_qwen_model(self, text, role_config):
         """
@@ -1206,9 +1243,21 @@ class TTSDubbingProcessor:
             # 步骤2：获取实际音频时长
             actual_duration_ms = segment.get('actual_duration_ms', original_duration_ms)
             
+            # 关键修复：与音频拼接逻辑保持一致
+            # 如果配音时长小于原始时长，音频会填充静音到原始时长
+            # 所以字幕时长也应该使用原始时长（而不是实际配音时长）
+            if actual_duration_ms < original_duration_ms:
+                # 配音较短，音频会填充静音，字幕使用原始时长
+                effective_duration_ms = original_duration_ms
+                if i < 5:
+                    print(f"   字幕{i+1}: 配音={actual_duration_ms}ms < 原始={original_duration_ms}ms, 使用原始时长")
+            else:
+                # 配音较长或相等，使用实际配音时长
+                effective_duration_ms = actual_duration_ms
+            
             # 步骤3：计算新的时间轴（使用累积时间）
             new_start_ms = current_time_ms
-            new_end_ms = current_time_ms + actual_duration_ms
+            new_end_ms = current_time_ms + effective_duration_ms
             
             traditional_subtitles.append({
                 'index': i + 1,
@@ -1219,7 +1268,8 @@ class TTSDubbingProcessor:
                 'original_start_ms': original_start_ms,
                 'original_end_ms': original_end_ms,
                 'original_duration_ms': original_duration_ms,
-                'actual_duration_ms': actual_duration_ms
+                'actual_duration_ms': actual_duration_ms,
+                'effective_duration_ms': effective_duration_ms
             })
             
             # 步骤4：更新累积时间
@@ -1229,7 +1279,7 @@ class TTSDubbingProcessor:
             if i < 5:
                 print(f"   字幕{i+1}: 开始={new_start_ms}ms ({new_start_ms/1000:.2f}s), "
                       f"结束={new_end_ms}ms ({new_end_ms/1000:.2f}s), "
-                      f"时长={actual_duration_ms}ms ({actual_duration_ms/1000:.2f}s)")
+                      f"时长={effective_duration_ms}ms ({effective_duration_ms/1000:.2f}s)")
                 print(f"           原始: {original_start_ms}ms-{original_end_ms}ms "
                       f"(时长{original_duration_ms}ms)")
             elif i == 5:
@@ -1255,7 +1305,7 @@ class TTSDubbingProcessor:
                     f.write(f"{subtitle['text']}\n\n")
         
         # 统计信息
-        total_subtitle_duration = sum(s['actual_duration_ms'] for s in traditional_subtitles)
+        total_subtitle_duration = sum(s.get('effective_duration_ms', s['actual_duration_ms']) for s in traditional_subtitles)
         final_duration = current_time_ms  # 使用累积时间作为最终时长
         
         # 计算总间隔
@@ -1268,6 +1318,7 @@ class TTSDubbingProcessor:
         original_total_duration = subtitle_data[-1]['end_ms'] if subtitle_data else 0
         
         print(f"\n✅ 传统模式字幕生成完成:")
+        print(f"   ⚠️ 修复：配音较短时使用原始时长，与音频填充逻辑一致")
         print(f"   原始SRT总时长: {original_total_duration/1000:.2f}秒 ({original_total_duration}ms)")
         print(f"   配音总时长: {total_subtitle_duration/1000:.2f}秒 ({total_subtitle_duration}ms)")
         print(f"   间隔总时长: {total_gaps/1000:.2f}秒 ({total_gaps}ms)")

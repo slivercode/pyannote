@@ -331,34 +331,50 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
             end_ms = self.time_to_ms(subtitle['end'])
             
             # 使用对应角色的配置合成语音
+            target_duration_ms = end_ms - start_ms
+            
             try:
                 audio_path = self.synthesize_speech_with_role(
                     subtitle['text'], 
                     subtitle['speaker'], 
                     i + 1
                 )
-                audio_files.append(audio_path)
                 
-                # 测量实际音频时长（方案B需要）
+                # 测量实际音频时长
                 from pydub import AudioSegment
                 actual_audio = AudioSegment.from_file(audio_path)
                 actual_duration_ms = len(actual_audio)
-                target_duration_ms = end_ms - start_ms
-                
-                # 构建字幕数据
-                subtitle_data.append({
-                    'start_ms': start_ms,
-                    'end_ms': end_ms,
-                    'text': subtitle['text'],
-                    'audio_file': audio_path,
-                    'speaker': subtitle['speaker'],
-                    'original_duration_ms': target_duration_ms,  # 原始字幕时长
-                    'actual_duration_ms': actual_duration_ms     # 实际音频时长
-                })
+                synthesis_success = True
                 
             except Exception as e:
+                # TTS合成失败时，生成静音占位音频以保持时间轴同步
                 print(f"⚠️ 字幕 {i+1} 合成失败，跳过: {e}")
-                continue
+                print(f"   🔇 生成静音占位音频 ({target_duration_ms}ms) 以保持时间轴同步")
+                
+                # 生成静音占位音频
+                from pydub import AudioSegment
+                silence_audio = AudioSegment.silent(duration=target_duration_ms)
+                audio_path = self.temp_dir / f"silence_{i+1:04d}.wav"
+                silence_audio.export(str(audio_path), format="wav")
+                audio_path = str(audio_path)
+                
+                actual_duration_ms = target_duration_ms
+                synthesis_success = False
+            
+            # 无论成功还是失败，都添加到列表中保持索引对齐
+            audio_files.append(audio_path)
+            
+            # 构建字幕数据
+            subtitle_data.append({
+                'start_ms': start_ms,
+                'end_ms': end_ms,
+                'text': subtitle['text'],
+                'audio_file': audio_path,
+                'speaker': subtitle['speaker'],
+                'original_duration_ms': target_duration_ms,  # 原始字幕时长
+                'actual_duration_ms': actual_duration_ms,    # 实际音频时长
+                'synthesis_success': synthesis_success       # 标记是否合成成功
+            })
         
         print(f"PROGRESS:85%")
         
@@ -487,11 +503,17 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
         for temp_file in self.temp_dir.glob("*.wav"):
             temp_file.unlink()
         
-        # 6. 保存角色统计信息
+        # 6. 统计合成结果
+        success_count = sum(1 for s in subtitle_data if s.get('synthesis_success', True))
+        failed_count = len(subtitle_data) - success_count
+        
+        # 7. 保存角色统计信息
         stats_path = self.output_dir / "role_stats.json"
         import json
         stats_data = {
             "total_subtitles": total_subtitles,
+            "synthesis_success": success_count,
+            "synthesis_failed": failed_count,
             "speakers": dict(self.speaker_stats),
             "output_file": str(output_path)
         }
@@ -502,6 +524,9 @@ class MultiRoleDubbingProcessor(TTSDubbingProcessor):
         
         print(f"\n✅ 多角色TTS配音完成！")
         print(f"   音频文件: {output_path}")
+        print(f"   合成成功: {success_count}/{total_subtitles} 条字幕")
+        if failed_count > 0:
+            print(f"   ⚠️ 合成失败: {failed_count} 条字幕（已用静音占位，时间轴保持同步）")
         print(f"   统计信息: {stats_path}")
         if updated_srt_path:
             print(f"   更新后的字幕: {updated_srt_path}")
