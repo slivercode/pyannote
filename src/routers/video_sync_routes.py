@@ -306,15 +306,17 @@ async def start_video_sync(request: VideoSyncRequest):
                         video_sync_tasks[task_id]["error"] = error_msg
                     return
                 
-                # 2. 获取视频时长
+                # 2. 获取视频时长和帧率
                 video_duration = analyzer._get_video_duration()
+                video_fps = processor._get_video_fps(str(original_video_path))
                 
-                # 3. 转换为VideoSegment格式（包含间隔片段）
+                # 3. 转换为VideoSegment格式（包含间隔片段，使用帧边界对齐）
                 from video_timeline_sync_processor_optimized import create_segments_from_timeline_diffs
                 segments = create_segments_from_timeline_diffs(
                     timeline_diffs,
                     original_video_duration=video_duration,
-                    include_gaps=request.include_gaps
+                    include_gaps=request.include_gaps,
+                    video_fps=video_fps  # 传递帧率用于帧边界对齐
                 )
                 
                 # 检查 segments 是否为空
