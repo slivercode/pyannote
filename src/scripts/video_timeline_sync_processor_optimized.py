@@ -136,7 +136,7 @@ class OptimizedVideoTimelineSyncProcessor:
             use_gpu: bool = None,  # 改为None表示自动检测
             quality_preset: str = "medium",
             enable_frame_interpolation: bool = False,
-            max_segments_per_batch: int = 300,  # 新增：每批最多处理的片段数
+            max_segments_per_batch: int = 500,  # 增大默认值：每批最多处理的片段数（从300改为500，减少分批边界问题）
             background_audio_volume: float = 0.3,  # 环境声音量（0.0-1.0）
             max_parallel_batches: int = None,  # 新增：最大并行批次数（默认自动检测）
             ffmpeg_threads: int = None,  # 新增：每个FFmpeg进程的线程数（默认自动）
@@ -153,7 +153,7 @@ class OptimizedVideoTimelineSyncProcessor:
                 - CPU模式: ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow
                 - GPU模式: p1(最快)/p2/p3/p4(平衡)/p5/p6/p7(最慢质量最好)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
-            max_segments_per_batch: 每批最多处理的片段数（默认300，避免命令行过长）
+            max_segments_per_batch: 每批最多处理的片段数（默认500，避免命令行过长，同时减少分批边界问题）
             background_audio_volume: 环境声音量比例（默认0.3，即30%）
             max_parallel_batches: 最大并行批次数（默认为CPU核心数/2）
             ffmpeg_threads: 每个FFmpeg进程的线程数（默认0=自动）
@@ -338,12 +338,20 @@ class OptimizedVideoTimelineSyncProcessor:
         stream_labels = []
 
         print(f"🔧 构建CPU滤镜链: {len(segments)} 个片段")
+        
+        # 检查并修正时间轴重叠问题
+        prev_end = 0.0
+        for i, seg in enumerate(segments):
+            if seg.start_sec < prev_end - 0.001:  # 允许1ms的误差
+                print(f"   ⚠️ 检测到时间轴重叠: 片段{i}开始({seg.start_sec:.3f}s) < 前一片段结束({prev_end:.3f}s)")
+            prev_end = seg.end_sec
 
         for i, seg in enumerate(segments):
             label = f"v{i}"
-            start = seg.start_sec
-            end = seg.end_sec
-            ratio = seg.slowdown_ratio
+            # 修正：确保时间轴精度为3位小数，避免浮点精度问题
+            start = round(seg.start_sec, 3)
+            end = round(seg.end_sec, 3)
+            ratio = round(seg.slowdown_ratio, 6)
 
             if seg.needs_slowdown and enable_interpolation:
                 # 需要明显慢放且启用帧插值
@@ -407,9 +415,10 @@ class OptimizedVideoTimelineSyncProcessor:
         # 但解码和编码使用GPU加速
         for i, seg in enumerate(segments):
             label = f"v{i}"
-            start = seg.start_sec
-            end = seg.end_sec
-            ratio = seg.slowdown_ratio
+            # 修正：确保时间轴精度为3位小数，避免浮点精度问题
+            start = round(seg.start_sec, 3)
+            end = round(seg.end_sec, 3)
+            ratio = round(seg.slowdown_ratio, 6)
 
             if seg.needs_slowdown and enable_interpolation:
                 # 帧插值需要在CPU上执行
@@ -1818,7 +1827,7 @@ def create_segments_from_timeline_diffs(
 
     # 1. 添加开头间隔（如果存在）
     if include_gaps:
-        first_start = timeline_diffs[0].original_entry.start_sec
+        first_start = round(timeline_diffs[0].original_entry.start_sec, 3)
         if first_start > 0.01:  # 大于0.01秒才添加（10毫秒）
             segments.append(VideoSegment(
                 start_sec=0.0,
@@ -1827,24 +1836,34 @@ def create_segments_from_timeline_diffs(
                 needs_slowdown=False,
                 segment_type='gap'
             ))
-            print(f"  添加开头间隔: 0.0s - {first_start:.2f}s")
+            print(f"  添加开头间隔: 0.0s - {first_start:.3f}s")
 
     # 2. 添加字幕片段和中间间隔
+    prev_end = 0.0
     for i, diff in enumerate(timeline_diffs):
-        # 添加字幕片段
+        # 添加字幕片段（确保时间精度为3位小数）
+        start_sec = round(diff.original_entry.start_sec, 3)
+        end_sec = round(diff.original_entry.end_sec, 3)
+        
+        # 检查并修正时间轴重叠
+        if start_sec < prev_end - 0.001:
+            print(f"  ⚠️ 修正时间轴重叠: 字幕{i+1}开始时间从{start_sec:.3f}s调整为{prev_end:.3f}s")
+            start_sec = prev_end
+        
         segment = VideoSegment(
-            start_sec=diff.original_entry.start_sec,
-            end_sec=diff.original_entry.end_sec,
-            slowdown_ratio=diff.slowdown_ratio,
+            start_sec=start_sec,
+            end_sec=end_sec,
+            slowdown_ratio=round(diff.slowdown_ratio, 6),
             needs_slowdown=diff.needs_slowdown,
             segment_type='subtitle'
         )
         segments.append(segment)
+        prev_end = end_sec
 
         # 添加间隔片段（如果存在下一个字幕）
         if include_gaps and i < len(timeline_diffs) - 1:
-            gap_start = diff.original_entry.end_sec
-            gap_end = timeline_diffs[i + 1].original_entry.start_sec
+            gap_start = end_sec
+            gap_end = round(timeline_diffs[i + 1].original_entry.start_sec, 3)
             gap_duration = gap_end - gap_start
 
             if gap_duration > 0.01:  # 大于0.01秒才添加（10毫秒）
@@ -1855,21 +1874,22 @@ def create_segments_from_timeline_diffs(
                     needs_slowdown=False,
                     segment_type='gap'
                 ))
+                prev_end = gap_end
 
     # 3. 添加尾部间隔（如果存在）
     if include_gaps and original_video_duration > 0:
-        last_end = timeline_diffs[-1].original_entry.end_sec
+        last_end = round(timeline_diffs[-1].original_entry.end_sec, 3)
         tail_gap_duration = original_video_duration - last_end
 
         if tail_gap_duration > 0.01:  # 大于0.01秒才添加（10毫秒）
             segments.append(VideoSegment(
                 start_sec=last_end,
-                end_sec=original_video_duration,
+                end_sec=round(original_video_duration, 3),
                 slowdown_ratio=1.0,
                 needs_slowdown=False,
                 segment_type='gap'
             ))
-            print(f"  添加尾部间隔: {last_end:.2f}s - {original_video_duration:.2f}s")
+            print(f"  添加尾部间隔: {last_end:.3f}s - {original_video_duration:.3f}s")
 
     print(
         f"  总计: {len(segments)} 个片段（字幕: {sum(1 for s in segments if s.segment_type == 'subtitle')}, 间隔: {sum(1 for s in segments if s.segment_type == 'gap')}）")
