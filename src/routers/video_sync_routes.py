@@ -306,19 +306,17 @@ async def start_video_sync(request: VideoSyncRequest):
                         video_sync_tasks[task_id]["error"] = error_msg
                     return
                 
-                # 2. 获取视频时长和帧率
+                # 2. 获取视频时长
                 video_duration = analyzer._get_video_duration()
-                video_fps = processor._get_video_fps(str(original_video_path))
-                
-                # 3. 转换为VideoSegment格式（包含间隔片段，使用帧边界对齐）
+
+                # 3. 转换为VideoSegment格式（包含间隔片段）
                 from video_timeline_sync_processor_optimized import create_segments_from_timeline_diffs
                 segments = create_segments_from_timeline_diffs(
                     timeline_diffs,
                     original_video_duration=video_duration,
-                    include_gaps=request.include_gaps,
-                    video_fps=video_fps  # 传递帧率用于帧边界对齐
+                    include_gaps=request.include_gaps
                 )
-                
+
                 # 检查 segments 是否为空
                 if not segments:
                     with task_lock:
@@ -327,24 +325,24 @@ async def start_video_sync(request: VideoSyncRequest):
                         video_sync_tasks[task_id]["stage"] = "错误"
                         video_sync_tasks[task_id]["error"] = "无法生成视频片段：字幕文件可能为空或格式不正确"
                     return
-                
+
                 # 4. 估算处理时间
                 estimate = processor.estimate_processing_time(
                     video_duration_sec=video_duration,
                     num_segments=len(segments),
                     slowdown_segments=sum(1 for s in segments if s.needs_slowdown)
                 )
-                
+
                 print(f"⏱️  预计处理时间: {estimate['estimated_minutes']:.1f} 分钟")
-                
+
                 # 5. 执行优化处理
                 output_path = task_output_dir / "synced_video.mp4"
-                
+
                 def progress_callback(progress: int, message: str):
                     with task_lock:
                         video_sync_tasks[task_id]["progress"] = progress
                         video_sync_tasks[task_id]["stage"] = message
-                
+
                 process_result = processor.process_video_optimized(
                     input_video_path=str(original_video_path),
                     input_audio_path=str(updated_audio_path),
@@ -354,7 +352,7 @@ async def start_video_sync(request: VideoSyncRequest):
                     background_audio_path=str(background_audio_path) if background_audio_path else None,
                     background_volume=request.background_audio_volume if request.enable_background_audio else None
                 )
-                
+
                 # 处理返回结果（可能是字典或字符串）
                 if isinstance(process_result, dict):
                     result = {
@@ -379,7 +377,7 @@ async def start_video_sync(request: VideoSyncRequest):
                 print("💻 执行标准处理流程...")
                 result = processor.process()
                 result['mode'] = 'standard'
-            
+
             # 执行处理
             if result['success']:
                 with task_lock:
@@ -402,7 +400,7 @@ async def start_video_sync(request: VideoSyncRequest):
                     video_sync_tasks[task_id]["status"] = "failed"
                     video_sync_tasks[task_id]["error"] = result.get('error', '未知错误')
                     video_sync_tasks[task_id]["completed_at"] = datetime.now().isoformat()
-                    
+
         except Exception as e:
             import traceback
             error_msg = f"{str(e)}\n{traceback.format_exc()}"
@@ -410,11 +408,11 @@ async def start_video_sync(request: VideoSyncRequest):
                 video_sync_tasks[task_id]["status"] = "failed"
                 video_sync_tasks[task_id]["error"] = error_msg
                 video_sync_tasks[task_id]["completed_at"] = datetime.now().isoformat()
-    
+
     # 启动后台线程
     thread = threading.Thread(target=run_video_sync, daemon=True)
     thread.start()
-    
+
     return {
         "task_id": task_id,
         "status": "pending",
@@ -435,12 +433,12 @@ async def get_video_sync_status(task_id: str):
 async def download_synced_video(task_id: str, filename: str):
     """下载同步后的视频文件"""
     output_dir = get_output_dir()
-    
+
     file_path = output_dir / f"video_sync_{task_id}" / filename
-    
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
-    
+
     return FileResponse(
         path=str(file_path),
         filename=filename,
