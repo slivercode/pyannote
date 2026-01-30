@@ -127,6 +127,34 @@ class VideoSegment:
     segment_type: str  # 'subtitle' or 'gap'
 
 
+def align_time_to_frame(time_sec: float, fps: float = 30.0, mode: str = 'floor') -> float:
+    """
+    将时间对齐到最近的帧边界，避免 trim 切割时出现重复帧
+
+    Args:
+        time_sec: 原始时间（秒）
+        fps: 视频帧率（默认30fps）
+        mode: 对齐模式
+            - 'floor': 向下对齐（用于片段结束时间）
+            - 'ceil': 向上对齐（用于片段开始时间）
+            - 'round': 四舍五入对齐
+
+    Returns:
+        对齐后的时间（秒）
+    """
+    frame_duration = 1.0 / fps
+    frame_index = time_sec / frame_duration
+
+    if mode == 'floor':
+        aligned_frame = int(frame_index)
+    elif mode == 'ceil':
+        aligned_frame = int(frame_index) + (1 if frame_index % 1 > 0.001 else 0)
+    else:  # round
+        aligned_frame = round(frame_index)
+
+    return round(aligned_frame * frame_duration, 6)
+
+
 class OptimizedVideoTimelineSyncProcessor:
     """优化的视频时间轴同步处理器 - 支持自动GPU加速"""
 
@@ -136,7 +164,7 @@ class OptimizedVideoTimelineSyncProcessor:
             use_gpu: bool = None,  # 改为None表示自动检测
             quality_preset: str = "medium",
             enable_frame_interpolation: bool = False,
-            max_segments_per_batch: int = 300,  # 新增：每批最多处理的片段数
+            max_segments_per_batch: int = 500,  # 增大默认值：每批最多处理的片段数（从300改为500，减少分批边界问题）
             background_audio_volume: float = 0.3,  # 环境声音量（0.0-1.0）
             max_parallel_batches: int = None,  # 新增：最大并行批次数（默认自动检测）
             ffmpeg_threads: int = None,  # 新增：每个FFmpeg进程的线程数（默认自动）
@@ -153,7 +181,7 @@ class OptimizedVideoTimelineSyncProcessor:
                 - CPU模式: ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow
                 - GPU模式: p1(最快)/p2/p3/p4(平衡)/p5/p6/p7(最慢质量最好)
             enable_frame_interpolation: 是否启用帧插值（会显著增加处理时间）
-            max_segments_per_batch: 每批最多处理的片段数（默认300，避免命令行过长）
+            max_segments_per_batch: 每批最多处理的片段数（默认500，避免命令行过长，同时减少分批边界问题）
             background_audio_volume: 环境声音量比例（默认0.3，即30%）
             max_parallel_batches: 最大并行批次数（默认为CPU核心数/2）
             ffmpeg_threads: 每个FFmpeg进程的线程数（默认0=自动）
@@ -292,7 +320,8 @@ class OptimizedVideoTimelineSyncProcessor:
     def build_complex_filter_chain(
             self,
             segments: List[VideoSegment],
-            enable_interpolation: bool = False
+            enable_interpolation: bool = False,
+            video_fps: float = 30.0
     ) -> str:
         """
         构建FFmpeg复杂滤镜链（自动选择GPU或CPU模式）
@@ -306,19 +335,21 @@ class OptimizedVideoTimelineSyncProcessor:
         Args:
             segments: 视频片段列表
             enable_interpolation: 是否启用帧插值
+            video_fps: 视频帧率（用于帧边界对齐，避免重复帧）
 
         Returns:
             FFmpeg滤镜字符串
         """
         if self.use_gpu and self.gpu_caps and self.gpu_caps.get('has_cuda'):
-            return self._build_gpu_filter_chain(segments, enable_interpolation)
+            return self._build_gpu_filter_chain(segments, enable_interpolation, video_fps)
         else:
-            return self._build_cpu_filter_chain(segments, enable_interpolation)
+            return self._build_cpu_filter_chain(segments, enable_interpolation, video_fps)
 
     def _build_cpu_filter_chain(
             self,
             segments: List[VideoSegment],
-            enable_interpolation: bool = False
+            enable_interpolation: bool = False,
+            video_fps: float = 30.0
     ) -> str:
         """
         构建CPU模式的复杂滤镜链
@@ -326,6 +357,7 @@ class OptimizedVideoTimelineSyncProcessor:
         Args:
             segments: 视频片段列表
             enable_interpolation: 是否启用帧插值
+            video_fps: 视频帧率（用于帧边界对齐）
 
         Returns:
             FFmpeg滤镜字符串
@@ -333,28 +365,61 @@ class OptimizedVideoTimelineSyncProcessor:
         # 检查 segments 是否为空
         if not segments:
             raise ValueError("segments 列表为空，无法构建滤镜链。请检查输入的字幕文件是否有效。")
-        
+
         filter_parts = []
         stream_labels = []
 
-        print(f"🔧 构建CPU滤镜链: {len(segments)} 个片段")
+        print(f"🔧 构建CPU滤镜链: {len(segments)} 个片段 (帧率: {video_fps}fps)")
+
+        # 帧时长（用于边界对齐）
+        frame_duration = 1.0 / video_fps
+
+        # 预处理：对齐所有片段到帧边界，消除重叠
+        aligned_segments = []
+        prev_end = 0.0
 
         for i, seg in enumerate(segments):
-            label = f"v{i}"
-            start = seg.start_sec
-            end = seg.end_sec
-            ratio = seg.slowdown_ratio
+            # 对齐开始时间（向上取整到帧边界）
+            start = align_time_to_frame(seg.start_sec, video_fps, 'ceil')
+            # 对齐结束时间（向下取整到帧边界）
+            end = align_time_to_frame(seg.end_sec, video_fps, 'floor')
 
-            if seg.needs_slowdown and enable_interpolation:
+            # 确保开始时间不早于前一片段结束时间（消除重叠）
+            if start < prev_end:
+                start = prev_end
+                print(f"   ⚠️ 修正片段{i}重叠: 开始时间调整为 {start:.6f}s")
+
+            # 确保片段有效（至少1帧）
+            if end <= start:
+                end = start + frame_duration
+                print(f"   ⚠️ 修正片段{i}时长: 结束时间调整为 {end:.6f}s")
+
+            aligned_segments.append({
+                'start': start,
+                'end': end,
+                'ratio': round(seg.slowdown_ratio, 6),
+                'needs_slowdown': seg.needs_slowdown,
+                'original': seg
+            })
+            prev_end = end
+
+        # 构建滤镜链
+        for i, seg in enumerate(aligned_segments):
+            label = f"v{i}"
+            start = seg['start']
+            end = seg['end']
+            ratio = seg['ratio']
+
+            if seg['needs_slowdown'] and enable_interpolation:
                 # 需要明显慢放且启用帧插值
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio},"
+                    f"[0:v]trim=start={start:.6f}:end={end:.6f},setpts=(PTS-STARTPTS)*{ratio},"
                     f"minterpolate=fps=60:mi_mode=mci[{label}]"
                 )
             else:
                 # 所有其他情况：应用 slowdown_ratio
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
+                    f"[0:v]trim=start={start:.6f}:end={end:.6f},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
                 )
 
             stream_labels.append(f"[{label}]")
@@ -367,14 +432,16 @@ class OptimizedVideoTimelineSyncProcessor:
 
         print(f"   滤镜链长度: {len(filter_chain)} 字符")
         print(f"   片段数量: {len(segments)}")
-        print(f"   需要调整: {sum(1 for s in segments if abs(s.slowdown_ratio - 1.0) > 0.001)}")
+        print(f"   需要调整: {sum(1 for s in aligned_segments if abs(s['ratio'] - 1.0) > 0.001)}")
+        print(f"   帧边界对齐: ✅")
 
         return filter_chain
 
     def _build_gpu_filter_chain(
             self,
             segments: List[VideoSegment],
-            enable_interpolation: bool = False
+            enable_interpolation: bool = False,
+            video_fps: float = 30.0
     ) -> str:
         """
         构建GPU加速的复杂滤镜链
@@ -390,6 +457,7 @@ class OptimizedVideoTimelineSyncProcessor:
         Args:
             segments: 视频片段列表
             enable_interpolation: 是否启用帧插值
+            video_fps: 视频帧率（用于帧边界对齐）
 
         Returns:
             FFmpeg滤镜字符串
@@ -397,30 +465,60 @@ class OptimizedVideoTimelineSyncProcessor:
         # 检查 segments 是否为空
         if not segments:
             raise ValueError("segments 列表为空，无法构建滤镜链。请检查输入的字幕文件是否有效。")
-        
+
         filter_parts = []
         stream_labels = []
 
-        print(f"🚀 构建GPU加速滤镜链: {len(segments)} 个片段")
+        print(f"🚀 构建GPU加速滤镜链: {len(segments)} 个片段 (帧率: {video_fps}fps)")
+
+        # 帧时长（用于边界对齐）
+        frame_duration = 1.0 / video_fps
+
+        # 预处理：对齐所有片段到帧边界，消除重叠
+        aligned_segments = []
+        prev_end = 0.0
+
+        for i, seg in enumerate(segments):
+            # 对齐开始时间（向上取整到帧边界）
+            start = align_time_to_frame(seg.start_sec, video_fps, 'ceil')
+            # 对齐结束时间（向下取整到帧边界）
+            end = align_time_to_frame(seg.end_sec, video_fps, 'floor')
+
+            # 确保开始时间不早于前一片段结束时间（消除重叠）
+            if start < prev_end:
+                start = prev_end
+
+            # 确保片段有效（至少1帧）
+            if end <= start:
+                end = start + frame_duration
+
+            aligned_segments.append({
+                'start': start,
+                'end': end,
+                'ratio': round(seg.slowdown_ratio, 6),
+                'needs_slowdown': seg.needs_slowdown,
+                'original': seg
+            })
+            prev_end = end
 
         # GPU模式下，trim和setpts仍然在CPU执行
         # 但解码和编码使用GPU加速
-        for i, seg in enumerate(segments):
+        for i, seg in enumerate(aligned_segments):
             label = f"v{i}"
-            start = seg.start_sec
-            end = seg.end_sec
-            ratio = seg.slowdown_ratio
+            start = seg['start']
+            end = seg['end']
+            ratio = seg['ratio']
 
-            if seg.needs_slowdown and enable_interpolation:
+            if seg['needs_slowdown'] and enable_interpolation:
                 # 帧插值需要在CPU上执行
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio},"
+                    f"[0:v]trim=start={start:.6f}:end={end:.6f},setpts=(PTS-STARTPTS)*{ratio},"
                     f"minterpolate=fps=60:mi_mode=mci[{label}]"
                 )
             else:
                 # 标准处理
                 filter_parts.append(
-                    f"[0:v]trim=start={start}:end={end},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
+                    f"[0:v]trim=start={start:.6f}:end={end:.6f},setpts=(PTS-STARTPTS)*{ratio}[{label}]"
                 )
 
             stream_labels.append(f"[{label}]")
@@ -434,6 +532,7 @@ class OptimizedVideoTimelineSyncProcessor:
         print(f"   滤镜链长度: {len(filter_chain)} 字符")
         print(f"   片段数量: {len(segments)}")
         print(f"   GPU加速: 解码+编码")
+        print(f"   帧边界对齐: ✅")
 
         return filter_chain
 
@@ -562,7 +661,8 @@ class OptimizedVideoTimelineSyncProcessor:
             segments: List[VideoSegment],
             output_path: str,
             batch_index: int,
-            total_batches: int
+            total_batches: int,
+            video_fps: float = 30.0
     ) -> str:
         """
         处理单个批次（线程安全，支持GPU加速）
@@ -573,16 +673,18 @@ class OptimizedVideoTimelineSyncProcessor:
             output_path: 输出路径
             batch_index: 批次索引（从0开始）
             total_batches: 总批次数
+            video_fps: 视频帧率（用于帧边界对齐）
 
         Returns:
             输出文件路径
         """
         print(f"\n🔧 处理批次 {batch_index + 1}/{total_batches} ({len(segments)} 个片段)...")
 
-        # 构建滤镜链
+        # 构建滤镜链（传递帧率参数）
         filter_chain = self.build_complex_filter_chain(
             segments,
-            enable_interpolation=self.enable_frame_interpolation
+            enable_interpolation=self.enable_frame_interpolation,
+            video_fps=video_fps
         )
 
         # 构建FFmpeg命令
@@ -687,6 +789,8 @@ class OptimizedVideoTimelineSyncProcessor:
         """
         拼接多个批次的视频并添加音频
 
+        修复：使用统一的时间基和帧率参数，避免拼接时出现重复帧
+
         Args:
             batch_videos: 批次视频文件路径列表
             input_audio_path: 输入音频路径
@@ -730,11 +834,38 @@ class OptimizedVideoTimelineSyncProcessor:
                 '-map', '1:a'
             ])
 
-            # 编码设置
+            # 视频编码设置 - 重新编码以确保时间戳连续
+            # 这是修复重复帧问题的关键
+            if self.use_gpu and self.gpu_caps and self.gpu_caps.get('has_nvenc'):
+                # GPU 重新编码（快速）
+                cmd.extend([
+                    '-c:v', 'h264_nvenc',
+                    '-preset', 'p2',  # 快速预设
+                    '-cq', '20',  # 高质量
+                    '-rc', 'vbr',
+                    '-b:v', '0',
+                    '-gpu', str(self.gpu_device),
+                ])
+                print(f"   使用 GPU 重新编码拼接（确保时间戳连续）")
+            else:
+                # CPU 重新编码
+                cmd.extend([
+                    '-c:v', 'libx264',
+                    '-preset', 'veryfast',  # 快速预设
+                    '-crf', '20',  # 高质量
+                ])
+                print(f"   使用 CPU 重新编码拼接（确保时间戳连续）")
+
+            # 音频编码
             cmd.extend([
-                '-c:v', 'copy',  # 直接复制视频（已经编码过）
                 '-c:a', 'aac',
                 '-b:a', '192k'
+            ])
+
+            # 强制输出帧率和时间基一致
+            cmd.extend([
+                '-vsync', 'cfr',  # 恒定帧率
+                '-video_track_timescale', '90000',  # 统一时间基
             ])
 
             # 其他设置
@@ -792,7 +923,7 @@ class OptimizedVideoTimelineSyncProcessor:
             包含输出路径和处理时间的字典
         """
         start_time = time.time()
-        
+
         print("\n" + "=" * 60)
         print("🚀 优化处理模式")
         print("=" * 60)
@@ -803,7 +934,7 @@ class OptimizedVideoTimelineSyncProcessor:
             print(f"🎶 环境声: {background_audio_path} (音量: {vol * 100:.0f}%)")
         print(f"📊 片段数量: {len(segments)}")
         print(f"💾 输出路径: {output_path}")
-        
+
         # 检查 segments 是否为空
         if not segments:
             raise ValueError("segments 列表为空，无法处理视频。请检查输入的字幕文件是否有效。")
@@ -832,13 +963,13 @@ class OptimizedVideoTimelineSyncProcessor:
                 background_audio_path,
                 background_volume
             )
-        
+
         # 计算处理时间
         end_time = time.time()
         processing_time = end_time - start_time
-        
-        print(f"\n⏱️  总处理时间: {processing_time:.2f}秒 ({processing_time/60:.2f}分钟)")
-        
+
+        print(f"\n⏱️  总处理时间: {processing_time:.2f}秒 ({processing_time / 60:.2f}分钟)")
+
         return {
             'output_path': result_path,
             'processing_time_seconds': processing_time,
@@ -872,7 +1003,7 @@ class OptimizedVideoTimelineSyncProcessor:
             输出文件路径
         """
         import tempfile
-        
+
         # 检查 segments 是否为空
         if not segments:
             raise ValueError(
@@ -880,6 +1011,9 @@ class OptimizedVideoTimelineSyncProcessor:
                 f"输入视频: {input_video_path}\n"
                 f"请检查输入的字幕文件是否有效。"
             )
+
+        # 获取视频帧率（用于帧边界对齐）
+        video_fps = self._get_video_fps(input_video_path)
 
         # 1. 分割片段
         if progress_callback:
@@ -907,6 +1041,7 @@ class OptimizedVideoTimelineSyncProcessor:
             # 3. 并行处理批次（第二步优化核心）
             num_workers = min(len(batches), self.max_parallel_batches)
             print(f"\n🚀 启动并行处理: {num_workers} 个工作线程处理 {len(batches)} 个批次")
+            print(f"   视频帧率: {video_fps:.3f} fps（用于帧边界对齐）")
 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 # 提交所有批次任务
@@ -919,7 +1054,8 @@ class OptimizedVideoTimelineSyncProcessor:
                         batch,
                         batch_output,
                         i,
-                        len(batches)
+                        len(batches),
+                        video_fps  # 传递帧率参数
                     )
                     futures[future] = i
 
@@ -1009,7 +1145,7 @@ class OptimizedVideoTimelineSyncProcessor:
             输出文件路径
         """
         import tempfile
-        
+
         # 检查 segments 是否为空
         if not segments:
             raise ValueError(
@@ -1018,13 +1154,17 @@ class OptimizedVideoTimelineSyncProcessor:
                 f"请检查输入的字幕文件是否有效。"
             )
 
-        # 1. 构建复杂滤镜链
+        # 获取视频帧率（用于帧边界对齐）
+        video_fps = self._get_video_fps(input_video_path)
+
+        # 1. 构建复杂滤镜链（传递帧率参数）
         if progress_callback:
             progress_callback(10, "构建滤镜链")
 
         filter_chain = self.build_complex_filter_chain(
             segments,
-            enable_interpolation=self.enable_frame_interpolation
+            enable_interpolation=self.enable_frame_interpolation,
+            video_fps=video_fps
         )
 
         # 2. 构建FFmpeg命令（先生成无音频的视频）
@@ -1375,6 +1515,60 @@ class OptimizedVideoTimelineSyncProcessor:
         except Exception as e:
             print(f"   ⚠️  获取视频时长失败: {e}")
             return 0.0
+
+    def _get_video_fps(self, video_path: str) -> float:
+        """
+        获取视频帧率
+
+        Args:
+            video_path: 视频文件路径
+
+        Returns:
+            视频帧率（fps），默认30.0
+        """
+        try:
+            # 使用 ffprobe 获取帧率
+            ffprobe_path = self.ffmpeg_path.replace('ffmpeg', 'ffprobe')
+            if not os.path.exists(ffprobe_path):
+                # 尝试在同目录下找 ffprobe
+                ffprobe_path = str(Path(self.ffmpeg_path).parent / 'ffprobe.exe')
+                if not os.path.exists(ffprobe_path):
+                    ffprobe_path = 'ffprobe'
+
+            cmd = [
+                ffprobe_path,
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=r_frame_rate',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                video_path
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=10
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                fps_str = result.stdout.strip()
+                # 帧率可能是分数形式，如 "30000/1001" 或 "30/1"
+                if '/' in fps_str:
+                    num, den = fps_str.split('/')
+                    fps = float(num) / float(den)
+                else:
+                    fps = float(fps_str)
+
+                print(f"   📊 检测到视频帧率: {fps:.3f} fps")
+                return fps
+
+        except Exception as e:
+            print(f"   ⚠️  获取视频帧率失败: {e}，使用默认值 30fps")
+
+        return 30.0
 
     def _calibrate_video_duration(
             self,
@@ -1795,7 +1989,8 @@ class OptimizedVideoTimelineSyncProcessor:
 def create_segments_from_timeline_diffs(
         timeline_diffs: List,
         original_video_duration: float = 0,
-        include_gaps: bool = True
+        include_gaps: bool = True,
+        video_fps: float = 30.0
 ) -> List[VideoSegment]:
     """
     从时间轴差异列表创建视频片段列表（包含间隔片段）
@@ -1803,10 +1998,13 @@ def create_segments_from_timeline_diffs(
     这个函数用于将现有的TimelineDiff对象转换为VideoSegment对象
     如果include_gaps=True，会在字幕之间插入间隔片段
 
+    修复：使用帧边界对齐，避免片段重叠导致的重复帧问题
+
     Args:
         timeline_diffs: TimelineDiff对象列表
         original_video_duration: 原始视频总时长（秒），用于计算尾部间隔
         include_gaps: 是否包含间隔片段（默认True）
+        video_fps: 视频帧率（用于帧边界对齐，默认30fps）
 
     Returns:
         VideoSegment对象列表（包含字幕片段和间隔片段）
@@ -1816,10 +2014,27 @@ def create_segments_from_timeline_diffs(
     if not timeline_diffs:
         return segments
 
+    # 帧时长
+    frame_duration = 1.0 / video_fps
+
+    # 辅助函数：对齐到帧边界
+    def align_floor(t):
+        """向下对齐到帧边界"""
+        return round(int(t / frame_duration) * frame_duration, 6)
+
+    def align_ceil(t):
+        """向上对齐到帧边界"""
+        frame_idx = t / frame_duration
+        if frame_idx % 1 > 0.001:
+            frame_idx = int(frame_idx) + 1
+        else:
+            frame_idx = int(frame_idx)
+        return round(frame_idx * frame_duration, 6)
+
     # 1. 添加开头间隔（如果存在）
     if include_gaps:
-        first_start = timeline_diffs[0].original_entry.start_sec
-        if first_start > 0.01:  # 大于0.01秒才添加（10毫秒）
+        first_start = align_ceil(timeline_diffs[0].original_entry.start_sec)
+        if first_start > frame_duration:  # 大于1帧才添加
             segments.append(VideoSegment(
                 start_sec=0.0,
                 end_sec=first_start,
@@ -1827,27 +2042,41 @@ def create_segments_from_timeline_diffs(
                 needs_slowdown=False,
                 segment_type='gap'
             ))
-            print(f"  添加开头间隔: 0.0s - {first_start:.2f}s")
+            print(f"  添加开头间隔: 0.0s - {first_start:.6f}s")
 
     # 2. 添加字幕片段和中间间隔
+    prev_end = 0.0
     for i, diff in enumerate(timeline_diffs):
-        # 添加字幕片段
+        # 对齐字幕片段时间到帧边界
+        start_sec = align_ceil(diff.original_entry.start_sec)
+        end_sec = align_floor(diff.original_entry.end_sec)
+
+        # 确保开始时间不早于前一片段结束时间（消除重叠）
+        if start_sec < prev_end:
+            start_sec = prev_end
+            print(f"  ⚠️ 修正时间轴重叠: 字幕{i + 1}开始时间调整为{start_sec:.6f}s")
+
+        # 确保片段至少有1帧
+        if end_sec <= start_sec:
+            end_sec = start_sec + frame_duration
+
         segment = VideoSegment(
-            start_sec=diff.original_entry.start_sec,
-            end_sec=diff.original_entry.end_sec,
-            slowdown_ratio=diff.slowdown_ratio,
+            start_sec=start_sec,
+            end_sec=end_sec,
+            slowdown_ratio=round(diff.slowdown_ratio, 6),
             needs_slowdown=diff.needs_slowdown,
             segment_type='subtitle'
         )
         segments.append(segment)
+        prev_end = end_sec
 
         # 添加间隔片段（如果存在下一个字幕）
         if include_gaps and i < len(timeline_diffs) - 1:
-            gap_start = diff.original_entry.end_sec
-            gap_end = timeline_diffs[i + 1].original_entry.start_sec
-            gap_duration = gap_end - gap_start
+            gap_start = end_sec
+            gap_end = align_ceil(timeline_diffs[i + 1].original_entry.start_sec)
 
-            if gap_duration > 0.01:  # 大于0.01秒才添加（10毫秒）
+            # 确保间隔不与下一个字幕重叠
+            if gap_end > gap_start + frame_duration:  # 间隔大于1帧才添加
                 segments.append(VideoSegment(
                     start_sec=gap_start,
                     end_sec=gap_end,
@@ -1855,24 +2084,27 @@ def create_segments_from_timeline_diffs(
                     needs_slowdown=False,
                     segment_type='gap'
                 ))
+                prev_end = gap_end
 
     # 3. 添加尾部间隔（如果存在）
     if include_gaps and original_video_duration > 0:
-        last_end = timeline_diffs[-1].original_entry.end_sec
-        tail_gap_duration = original_video_duration - last_end
+        last_end = prev_end
+        video_end = align_floor(original_video_duration)
+        tail_gap_duration = video_end - last_end
 
-        if tail_gap_duration > 0.01:  # 大于0.01秒才添加（10毫秒）
+        if tail_gap_duration > frame_duration:  # 大于1帧才添加
             segments.append(VideoSegment(
                 start_sec=last_end,
-                end_sec=original_video_duration,
+                end_sec=video_end,
                 slowdown_ratio=1.0,
                 needs_slowdown=False,
                 segment_type='gap'
             ))
-            print(f"  添加尾部间隔: {last_end:.2f}s - {original_video_duration:.2f}s")
+            print(f"  添加尾部间隔: {last_end:.6f}s - {video_end:.6f}s")
 
     print(
         f"  总计: {len(segments)} 个片段（字幕: {sum(1 for s in segments if s.segment_type == 'subtitle')}, 间隔: {sum(1 for s in segments if s.segment_type == 'gap')}）")
+    print(f"  帧边界对齐: ✅ (fps={video_fps})")
 
     return segments
 
