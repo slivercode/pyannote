@@ -75,9 +75,9 @@ class VideoTimelineSyncProcessor:
         updated_audio_path: str,
         updated_srt_path: str,
         output_dir: str,
-        max_slowdown_ratio: float = 0,
+        max_slowdown_ratio: float = 2.0,
         quality_preset: str = "medium",
-        enable_frame_interpolation: bool = False,
+        enable_frame_interpolation: bool = True,
         include_gaps: bool = True,
         slowdown_start_index: int = 1,
         use_gpu: bool = False,
@@ -370,100 +370,9 @@ class VideoTimelineSyncProcessor:
         
         return cmd
     
-    def _detect_encoding(self, file_path: Path) -> str:
-        """
-        检测文件编码（不依赖外部库）
-        
-        Args:
-            file_path: 文件路径
-            
-        Returns:
-            检测到的编码名称
-        """
-        # 读取文件的前几个字节来检测编码
-        with open(file_path, 'rb') as f:
-            raw_data = f.read(10000)  # 读取前10KB
-        
-        if len(raw_data) == 0:
-            return 'utf-8'
-        
-        # 检查BOM标记（最可靠的方法）
-        # 检查文件开头
-        if raw_data.startswith(b'\xff\xfe'):
-            # UTF-16 LE BOM
-            return 'utf-16-le'
-        elif raw_data.startswith(b'\xfe\xff'):
-            # UTF-16 BE BOM
-            return 'utf-16-be'
-        elif raw_data.startswith(b'\xef\xbb\xbf'):
-            # UTF-8 BOM
-            return 'utf-8-sig'
-        
-        # 检查是否包含UTF-16特征字节（0xff 0xfe 或 0xfe 0xff）
-        # 即使不在开头，如果文件中有这些模式，也可能是UTF-16
-        if b'\xff\xfe' in raw_data[:100] or b'\xfe\xff' in raw_data[:100]:
-            # 检查null字节模式（UTF-16通常有很多null字节）
-            null_count = raw_data[:100].count(b'\x00')
-            if null_count > 10:  # 如果前100字节中有超过10个null字节，很可能是UTF-16
-                # 尝试判断是LE还是BE
-                # UTF-16 LE: 偶数位置通常是ASCII字符，奇数位置是0x00
-                # UTF-16 BE: 奇数位置通常是ASCII字符，偶数位置是0x00
-                try:
-                    # 尝试UTF-16 LE
-                    test_le = raw_data[:200].decode('utf-16-le', errors='strict')
-                    # 如果成功且包含可打印字符，很可能是UTF-16 LE
-                    if any(c.isprintable() for c in test_le[:50]):
-                        return 'utf-16-le'
-                except:
-                    pass
-                
-                try:
-                    # 尝试UTF-16 BE
-                    test_be = raw_data[:200].decode('utf-16-be', errors='strict')
-                    if any(c.isprintable() for c in test_be[:50]):
-                        return 'utf-16-be'
-                except:
-                    pass
-        
-        # 尝试使用chardet（如果可用）
-        try:
-            import chardet
-            result = chardet.detect(raw_data)
-            detected_encoding = result.get('encoding', 'utf-8')
-            confidence = result.get('confidence', 0)
-            
-            if confidence >= 0.7:
-                # 标准化编码名称
-                if detected_encoding.lower() in ['utf-16', 'utf16']:
-                    # chardet可能返回'UTF-16'，需要指定LE或BE
-                    # 默认使用LE（更常见）
-                    return 'utf-16-le'
-                return detected_encoding
-        except ImportError:
-            pass  # chardet不可用，继续使用其他方法
-        except Exception:
-            pass  # chardet检测失败，继续使用其他方法
-        
-        # 尝试常见编码，找到第一个能成功解码的
-        # 优先尝试UTF-16（因为错误信息显示可能是UTF-16）
-        common_encodings = ['utf-16-le', 'utf-16-be', 'utf-8', 'utf-8-sig', 'gbk', 'gb2312', 'big5', 'latin1']
-        for encoding in common_encodings:
-            try:
-                # 尝试解码前1000字节
-                test_data = raw_data[:min(1000, len(raw_data))]
-                decoded = test_data.decode(encoding)
-                # 检查是否包含可打印字符（避免误判）
-                if any(c.isprintable() for c in decoded[:50]):
-                    return encoding
-            except (UnicodeDecodeError, LookupError):
-                continue
-        
-        # 默认返回utf-8
-        return 'utf-8'
-    
     def parse_srt(self, srt_path: Path) -> List[SubtitleEntry]:
         """
-        解析SRT文件（自动检测编码）
+        解析SRT文件
         
         Args:
             srt_path: SRT文件路径
@@ -473,104 +382,8 @@ class VideoTimelineSyncProcessor:
         """
         print(f"📖 解析SRT文件: {srt_path}")
         
-        # 检查文件是否存在
-        srt_path = Path(srt_path)
-        if not srt_path.exists():
-            print(f"   ❌ 文件不存在: {srt_path}")
-            return []
-        
-        # 读取原始字节用于调试
-        try:
-            with open(srt_path, 'rb') as f:
-                raw_bytes = f.read()
-            print(f"   📊 文件大小: {len(raw_bytes)} 字节")
-            if len(raw_bytes) > 0:
-                # 打印前50个字节的十六进制表示
-                hex_preview = raw_bytes[:50].hex(' ')
-                print(f"   📊 前50字节(hex): {hex_preview}")
-                # 检查BOM
-                if raw_bytes.startswith(b'\xef\xbb\xbf'):
-                    print(f"   📊 检测到UTF-8 BOM")
-                elif raw_bytes.startswith(b'\xff\xfe'):
-                    print(f"   📊 检测到UTF-16 LE BOM")
-                elif raw_bytes.startswith(b'\xfe\xff'):
-                    print(f"   📊 检测到UTF-16 BE BOM")
-        except Exception as e:
-            print(f"   ⚠️  读取原始字节失败: {e}")
-            raw_bytes = b''
-        
-        if len(raw_bytes) == 0:
-            print(f"   ❌ 文件为空")
-            return []
-        
-        # 尝试多种编码方式
-        encodings_to_try = []
-        
-        # 首先尝试自动检测
-        try:
-            detected_encoding = self._detect_encoding(srt_path)
-            encodings_to_try.append(detected_encoding)
-            print(f"   检测到编码: {detected_encoding}")
-        except Exception as e:
-            print(f"   编码检测失败: {e}，使用默认编码列表")
-        
-        # 添加常见编码作为备选
-        common_encodings = ['utf-8', 'utf-8-sig', 'utf-16', 'utf-16-le', 'utf-16-be', 'gbk', 'gb2312', 'big5', 'latin1']
-        for enc in common_encodings:
-            if enc not in encodings_to_try:
-                encodings_to_try.append(enc)
-        
-        content = None
-        used_encoding = None
-        
-        # SRT格式验证函数
-        def is_valid_srt_content(text: str) -> bool:
-            """
-            验证内容是否像有效的SRT文件
-            检查是否包含SRT时间轴格式: 00:00:00,000 --> 00:00:00,000
-            """
-            import re
-            # 检查是否包含SRT时间轴格式
-            time_pattern = r'\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}'
-            if re.search(time_pattern, text[:2000]):  # 只检查前2000字符
-                return True
-            return False
-        
-        # 尝试每种编码
-        for encoding in encodings_to_try:
-            try:
-                with open(srt_path, 'r', encoding=encoding, errors='strict') as f:
-                    content = f.read()
-                # 验证内容是否是有效的SRT格式
-                if len(content) > 0 and is_valid_srt_content(content):
-                    used_encoding = encoding
-                    print(f"   ✅ 成功使用编码: {encoding}")
-                    break
-                else:
-                    # 内容不是有效SRT格式，继续尝试下一个编码
-                    print(f"   ⚠️  编码 {encoding} 读取成功但内容不是有效SRT格式")
-                    content = None
-                    continue
-            except (UnicodeDecodeError, LookupError) as e:
-                continue
-            except Exception as e:
-                # 其他异常（如文件不存在等），记录但不中断
-                print(f"   ⚠️  编码 {encoding} 尝试失败: {e}")
-                continue
-        
-        # 如果所有编码都失败，使用错误处理模式
-        if content is None:
-            print(f"   ⚠️  所有编码尝试失败，使用错误处理模式")
-            try:
-                with open(srt_path, 'r', encoding='utf-8', errors='replace') as f:
-                    content = f.read()
-                used_encoding = 'utf-8 (with error replacement)'
-                print(f"   ⚠️  使用UTF-8（错误替换模式），可能有字符丢失")
-            except Exception as e:
-                raise ValueError(f"无法读取SRT文件 {srt_path}: {e}")
-        
-        if used_encoding:
-            print(f"   最终使用编码: {used_encoding}")
+        with open(srt_path, 'r', encoding='utf-8') as f:
+            content = f.read()
         
         # 标准化换行符
         content = content.replace('\r\n', '\n').replace('\r', '\n')
@@ -578,36 +391,23 @@ class VideoTimelineSyncProcessor:
         entries = []
         blocks = re.split(r'\n\n+', content.strip())
         
-        print(f"   📊 分割后的块数: {len(blocks)}")
-        if len(blocks) > 0:
-            # 打印第一个块的内容用于调试
-            first_block_preview = blocks[0][:200] if len(blocks[0]) > 200 else blocks[0]
-            print(f"   📝 第一个块预览: {repr(first_block_preview)}")
-        
         time_pattern = re.compile(r'(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})')
         
-        skipped_blocks = 0
         for block in blocks:
             lines = [line.strip() for line in block.split('\n') if line.strip()]
             
             if len(lines) < 3:
-                skipped_blocks += 1
                 continue
             
             # 解析序号
             try:
                 index = int(lines[0])
             except ValueError:
-                skipped_blocks += 1
                 continue
             
             # 解析时间轴
             time_match = time_pattern.match(lines[1])
             if not time_match:
-                skipped_blocks += 1
-                if len(entries) == 0:
-                    # 第一个块解析失败时打印调试信息
-                    print(f"   ⚠️  时间轴解析失败: {repr(lines[1][:100] if len(lines[1]) > 100 else lines[1])}")
                 continue
             
             # 提取时间
@@ -632,9 +432,6 @@ class VideoTimelineSyncProcessor:
                 text=text
             ))
         
-        if skipped_blocks > 0:
-            print(f"   ⚠️  跳过了 {skipped_blocks} 个无效块")
-        
         print(f"✅ 解析完成: {len(entries)} 条字幕")
         return entries
     
@@ -651,14 +448,6 @@ class VideoTimelineSyncProcessor:
         
         original_entries = self.parse_srt(self.original_srt_path)
         updated_entries = self.parse_srt(self.updated_srt_path)
-        
-        # 检查解析结果是否为空
-        if not original_entries:
-            print(f"❌ 原始SRT解析结果为空: {self.original_srt_path}")
-            return []
-        if not updated_entries:
-            print(f"❌ 更新SRT解析结果为空: {self.updated_srt_path}")
-            return []
         
         if len(original_entries) != len(updated_entries):
             print(f"⚠️ 警告: 字幕数量不一致")
@@ -1425,11 +1214,8 @@ class VideoTimelineSyncProcessor:
         4. 拼接所有片段
         
         Returns:
-            处理结果字典（包含处理时间）
+            处理结果字典
         """
-        import time
-        start_time = time.time()
-        
         print("\n" + "="*60)
         print("🎬 视频时间轴同步处理器")
         print("="*60)
@@ -1535,41 +1321,26 @@ class VideoTimelineSyncProcessor:
             print("\n🧹 清理临时文件...")
             shutil.rmtree(self.temp_dir)
             
-            # 计算处理时间
-            end_time = time.time()
-            processing_time = end_time - start_time
-            
             print("\n" + "="*60)
             print("✅ 处理完成！")
             print("="*60)
             print(f"输出文件: {final_output}")
-            print(f"⏱️  总处理时间: {processing_time:.2f}秒 ({processing_time/60:.2f}分钟)")
             
             return {
                 'success': True,
                 'output_path': str(final_output),
                 'timeline_diffs': len(timeline_diffs),
-                'segments_processed': len(processed_segments),
-                'processing_time_seconds': processing_time,
-                'processing_time_minutes': processing_time / 60,
-                'mode': 'standard'
+                'segments_processed': len(processed_segments)
             }
             
         except Exception as e:
-            # 计算处理时间（即使失败）
-            end_time = time.time()
-            processing_time = end_time - start_time
-            
             print(f"\n❌ 处理失败: {e}")
-            print(f"⏱️  处理时间: {processing_time:.2f}秒")
             import traceback
             traceback.print_exc()
             
             return {
                 'success': False,
-                'error': str(e),
-                'processing_time_seconds': processing_time,
-                'processing_time_minutes': processing_time / 60
+                'error': str(e)
             }
     
     def _cut_by_original_srt(self, timeline_diffs: List[TimelineDiff]) -> List[Path]:
