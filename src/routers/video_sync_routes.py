@@ -45,10 +45,11 @@ class VideoSyncRequest(BaseModel):
     
     # 性能优化选项（新增）
     use_optimized_mode: bool = True  # 是否使用优化模式（一次性处理，默认启用）
+    max_segments_per_batch: int = 180  # 每批片段数（默认180，避免命令行过长）
     
     # 环境声混合选项（新增）
     background_audio_volume: float = 0.3  # 环境声音量（0.0-1.0，默认30%）
-    enable_background_audio: bool = False  # 是否启用环境声混合1
+    enable_background_audio: bool = False  # 是否启用环境声混合
 
 
 # 视频同步任务字典
@@ -198,6 +199,7 @@ async def start_video_sync(request: VideoSyncRequest):
             # 根据优化模式选择处理器
             if request.use_optimized_mode:
                 print("🚀 使用优化模式（一次性处理）")
+                print(f"   每批片段数: {request.max_segments_per_batch}")
                 from video_timeline_sync_processor_optimized import OptimizedVideoTimelineSyncProcessor
                 from video_timeline_sync_processor import VideoTimelineSyncProcessor
                 
@@ -222,7 +224,8 @@ async def start_video_sync(request: VideoSyncRequest):
                     use_gpu=request.use_gpu,  # None=自动检测，True=强制启用，False=禁用
                     gpu_device=request.gpu_id,
                     quality_preset=request.quality_preset,
-                    enable_frame_interpolation=request.enable_frame_interpolation
+                    enable_frame_interpolation=request.enable_frame_interpolation,
+                    max_segments_per_batch=request.max_segments_per_batch  # 传递每批片段数
                 )
             else:
                 print("💻 使用标准模式（多次处理）")
@@ -274,15 +277,21 @@ async def start_video_sync(request: VideoSyncRequest):
                 # 1. 分析时间轴差异
                 timeline_diffs = analyzer.analyze_timeline_diff()
                 
-                # 2. 获取视频时长
+                # 2. 获取视频时长和音频时长
                 video_duration = analyzer._get_video_duration()
+                audio_duration = analyzer._get_audio_duration()
                 
-                # 3. 转换为VideoSegment格式（包含间隔片段）
+                print(f"📊 时长信息:")
+                print(f"   原始视频: {video_duration:.2f}s")
+                print(f"   TTS音频: {audio_duration:.2f}s")
+                
+                # 3. 转换为VideoSegment格式（包含间隔片段，传入音频时长用于精确同步）
                 from video_timeline_sync_processor_optimized import create_segments_from_timeline_diffs
                 segments = create_segments_from_timeline_diffs(
                     timeline_diffs,
                     original_video_duration=video_duration,
-                    include_gaps=request.include_gaps
+                    include_gaps=request.include_gaps,
+                    target_audio_duration=audio_duration  # 新增：传入目标音频时长
                 )
                 
                 # 4. 估算处理时间
