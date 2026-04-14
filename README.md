@@ -210,3 +210,4 @@ python .\src\scripts\merge.py `
 ## 开发状态
 
 当前仓库没有 `requirements.txt`、`pyproject.toml` 或 README 之外的安装说明。依赖更像是通过项目内置 `python/`、`vendor/`、`ffmpeg/` 和 `hf_cache/` 管理。若要改造成可复现的开发环境，建议后续补充依赖锁定文件和环境初始化脚本。
+祝看到这里的你有开心的一天。
